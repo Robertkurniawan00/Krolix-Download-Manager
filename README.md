@@ -5,7 +5,7 @@
 <h1 align="center">Krolix Download Manager</h1>
 
 <p align="center">
-  <b>Modern, High-Performance Multi-threaded Download Manager & Stream Sniffer for Windows</b>
+  <b>Modern, High-Performance Multi-Threaded Download Accelerator & Stream Sniffer for Windows</b>
 </p>
 
 <p align="center">
@@ -18,131 +18,131 @@
 
 ---
 
-## Ringkasan (Overview)
+## Overview
 
-**Krolix Download Manager** adalah suite akselerasi unduhan desktop berkinerja tinggi yang dirancang khusus untuk lingkungan Windows 10 dan 11. Aplikasi ini memadukan mesin koneksi multi-segmen paralel berkecepatan tinggi, pengendus media dinamis (*dynamic media sniffer*), remuxing audio/video lossless, integrasi peramban tanpa hambatan, serta antarmuka modern bernuansa macOS dengan sentuhan Fluent Dark.
+**Krolix Download Manager** is a desktop download acceleration suite engineered specifically for Windows 10 and 11 environments. It combines a high-throughput multi-segment connection engine, dynamic stream sniffer, lossless audio/video remuxing, seamless browser interception, and a refined macOS-inspired Fluent Dark interface.
 
-Krolix secara dinamis memecah tugas unduhan menjadi segmen-segmen paralel, memaksimalkan penggunaan bandwidth internet yang tersedia sambil tetap menjaga integritas berkas secara presisi.
-
----
-
-## Fitur Utama (Key Features)
-
-### 1. Mesin Akselerasi Multi-Threaded
-* **Hingga 32 Segmen Paralel**: Pembagian potongan data dinamis dengan streaming paralel instan.
-* **Smart Auto-Resume**: Dukungan penuh untuk HTTP 206 Partial Content dengan rekonstruksi rentang bita otomatis.
-* **Anti-Forbidden Auto-Recovery**: Pembaruan header dan refresh token otomatis untuk tautan CDN yang memiliki masa kedaluwarsa (`401`, `403`, `410`).
-* **Verifikasi Integritas Terakselerasi**: Mesin native C# terintegrasi untuk verifikasi hash berkecepatan tinggi (MD5, SHA-1, SHA-256).
-
-### 2. Intelligent Stream Sniffer & Lossless Remuxing
-* **Dukungan HLS & DASH**: Mencegat playlist `.m3u8` dan manifes `.mpd` dengan pemilih resolusi multi-bitrate.
-* **Lossless Audio-Video Sync**: Penggabungan segmen TS ke MP4 secara mulus dengan penataan timestamp presisi (`-avoid_negative_ts make_zero -fflags +genpts -bsf:a aac_adtstoasc`).
-* **Penyisipan Faststart**: Penataan header MP4 otomatis (*moov atom at beginning*) untuk memungkinkan pemutaran instan (*instant seek*) pada pemutar media.
-* **Perekaman Siaran Langsung**: Perekaman live stream secara real-time dengan penghentian dan konversi rapi.
-
-### 3. Integrasi Peramban Manifest V3
-* **Intersepsi Sekali Klik**: Integrasi otomatis untuk Google Chrome, Microsoft Edge, dan Brave melalui Native Messaging Host (`com.krolix.downloader`).
-* **Penerusan Kredensial & Cookie**: Meneruskan sesi login, header referer, dan cookie secara otomatis untuk melewati proteksi hotlinking.
-* **Panel Aksi Melayang**: Tombol unduhan responsif pada pemutar media web untuk pemilihan resolusi instan.
-
-### 4. Dukungan BitTorrent & Magnet Link
-* **Klien Torrent Terpadu**: Dukungan langsung untuk berkas `.torrent` dan tautan `magnet:`.
-* **Ekstraksi Berkas Selektif**: Pratinjau dan pemilihan berkas spesifik dari kawanan torrent.
-* **Pengaturan Rasio & Seeding**: Batas waktu seeding yang dapat dikonfigurasi serta pembatasan kecepatan unggah.
-
-### 5. Antarmuka Modern macOS & Fluent Dark
-* **Bilah Header macOS 48px Terpadu**: Tombol navigasi window kapsul, logo transparan, pencarian terpusat, menu aksi 3-titik, dan tombol konfigurasi.
-* **Telemetri Real-Time**: Kecepatan transfer langsung, estimasi waktu selesai (ETA), status thread, dan grafik bandwidth interaktif.
-* **Manajemen Unduhan Fleksibel**: Pengelompokan kategori otomatis, antrean terjadwal (*scheduler*), serta pembatas kecepatan unduh (*speed limiter*).
-
-### 6. Otomasi & Antarmuka COM Windows
-* **COM Automation Bridge**: Antarmuka Windows COM `Krolix.LinkTransmitter` dapat diakses langsung melalui PowerShell, VBScript, C#, maupun C++.
-* **Argumen Baris Perintah (CLI)**:
-  * `/d <url>` : Alamat URL unduhan
-  * `/p <path>` : Folder tujuan penyimpanan
-  * `/f <name>` : Nama berkas keluaran
-  * `/n` : Mode hening tanpa dialog konfirmasi
-  * `/a` : Tambahkan ke antrean saja
-  * `/s` : Mulai proses antrean
+Krolix dynamically splits file downloads into parallel segments, maximizing connection throughput while maintaining file integrity.
 
 ---
 
-## Arsitektur Proyek
+## Key Features
+
+### 1. Accelerated Multi-Threaded Connection Engine
+* **Up to 32 Parallel Segments**: Dynamic chunk segmentation with instant parallel throughput.
+* **Intelligent Auto-Resume**: Full support for HTTP 206 Partial Content with automatic byte-range reconstruction.
+* **Anti-Forbidden Auto-Recovery**: Automatic header renewal and token refresh for expiring CDN URLs (HTTP 401, 403, 410).
+* **Hardware-Accelerated Verification**: Integrated C# native engine for rapid MD5, SHA-1, and SHA-256 cryptographic hash calculations.
+
+### 2. Stream Sniffer & Lossless Remuxing
+* **Adaptive HLS & DASH Protocols**: Interception of `.m3u8` playlists and `.mpd` manifests with multi-bitrate resolution pickers.
+* **Lossless Audio-Video Synchronization**: Direct TS segment remuxing to MP4 with exact timestamp alignment (`-avoid_negative_ts make_zero -fflags +genpts -bsf:a aac_adtstoasc`).
+* **Faststart Header Placement**: Automatic MP4 `moov` atom placement at the beginning of the file for instant seekability in media players.
+* **Live Stream Capture**: Real-time stream recording with clean finalization and container conversion.
+
+### 3. Manifest V3 Browser Integration
+* **One-Click Interception**: Chrome, Microsoft Edge, and Brave browser integration via Native Messaging Host (`com.krolix.downloader`).
+* **Session & Cookie Passthrough**: Forwards authentication cookies, user-agent data, and referer headers to bypass hotlinking and CDN restrictions.
+* **Floating Quality Action Panel**: Responsive overlay button on web media players for one-click resolution selection.
+
+### 4. BitTorrent & Magnet Link Protocol
+* **Integrated Torrent Client**: Native support for `.torrent` metadata files and `magnet:` URI schemes.
+* **Selective File Extraction**: Interactive tree view for inspecting and selecting specific files from multi-file torrent swarms.
+* **Configurable Seeding Rules**: User-defined seeding durations and bandwidth throttling limits.
+
+### 5. Unified macOS & Fluent Dark Interface
+* **Unified 48px Header**: Integrated traffic light window controls, transparent brand mascot, centered search bar, 3-dot overflow actions menu, and configuration button.
+* **Real-Time Telemetry**: Instant transfer rates, estimated time of arrival (ETA), per-thread progress indicators, and responsive bandwidth graphs.
+* **Category Routing**: Automatic categorization (Video, Music, Compressed, Documents, Programs), queue scheduling, and speed limiters.
+
+### 6. Automation & Windows COM Interface
+* **COM Automation Bridge**: Windows COM interface `Krolix.LinkTransmitter` accessible via PowerShell, VBScript, C#, or C++.
+* **Command-Line Switches**:
+  * `/d <url>` : Download URL
+  * `/p <path>` : Destination directory
+  * `/f <name>` : Target file name
+  * `/n` : Silent mode (skip confirmation dialog)
+  * `/a` : Add to queue only
+  * `/s` : Start queue processing
+
+---
+
+## Project Structure
 
 ```text
 DOWNLOAD MANAGER/
 ├── app/
 │   ├── api/                 # Automation SDKs (PowerShell, Node.js, C++ headers)
-│   ├── assets/              # Ikon, logo, font, dan audio notifikasi
-│   ├── core/                # Mesin unduh, segment worker, database & model
-│   ├── native/              # Kode sumber C# native engine & COM bridge
-│   ├── ui/                  # Tampilan antarmuka PyQt6, dialog, dan widget
-│   └── utils/               # Modul integrasi Windows dan peramban
-├── extension/               # Ekstensi browser Manifest V3 (Chrome, Edge, Brave)
-├── tests/                   # Rangkaian pengujian unit dan integrasi
-├── build_exe.py             # Otomasi kompilasi PyInstaller dan C# native engine
-├── installer.py             # Wizard penginstal Windows berantarmuka grafis
-├── main.py                  # Titik masuk utama aplikasi
-├── requirements.txt         # Daftar dependensi Python
-├── .gitignore               # Aturan pengabaian berkas Git
-└── README.md                # Dokumentasi proyek
+│   ├── assets/              # High-resolution icons, logos, fonts, and sound effects
+│   ├── core/                # Download engines, segment workers, database & models
+│   ├── native/              # C# native engine & COM bridge source and binaries
+│   ├── ui/                  # PyQt6 macOS Fluent Dark windows, dialogs, and widgets
+│   └── utils/               # Windows native integration and browser helpers
+├── extension/               # Manifest V3 browser extension (Chrome, Edge, Brave)
+├── tests/                   # Automated unit and integration test suite
+├── build_exe.py             # Packaging automation script (PyInstaller + C# compiler)
+├── installer.py             # Graphical Windows setup wizard
+├── main.py                  # Application entry point
+├── requirements.txt         # Python package dependencies
+├── .gitignore               # Git ignore rules
+└── README.md                # Project documentation
 ```
 
 ---
 
-## Panduan Menjalankan dari Source Code
+## Running from Source Code
 
-### Prasyarat
-* Python 3.10, 3.11, atau 3.12 (64-bit)
-* Sistem Operasi Windows 10 atau Windows 11
-* FFmpeg (opsional untuk remuxing segmen video eksternal)
+### Prerequisites
+* Python 3.10, 3.11, or 3.12 (64-bit)
+* Windows 10 or Windows 11
+* FFmpeg (optional, for external video stream remuxing)
 
-### Langkah-langkah
+### Installation Steps
 
-1. **Clone Repositori**:
+1. **Clone the repository**:
    ```bash
    git clone https://github.com/Robertkurniawan00/Krolix-Download-Manager.git
    cd Krolix-Download-Manager
    ```
 
-2. **Buat dan Aktifkan Virtual Environment**:
+2. **Create and activate a virtual environment**:
    ```bash
    python -m venv venv
    .\venv\Scripts\activate
    ```
 
-3. **Pasang Dependensi**:
+3. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-4. **Jalankan Aplikasi**:
+4. **Launch Krolix**:
    ```bash
    python main.py
    ```
 
 ---
 
-## Pemasangan Ekstensi Peramban
+## Browser Extension Setup
 
-1. Buka peramban Chromium (Google Chrome, Microsoft Edge, atau Brave).
-2. Masuk ke halaman pengelolaan ekstensi:
+1. Open your Chromium-based browser (Google Chrome, Microsoft Edge, or Brave).
+2. Navigate to the extensions page:
    * **Chrome**: `chrome://extensions`
    * **Edge**: `edge://extensions`
    * **Brave**: `brave://extensions`
-3. Aktifkan saklar **Mode pengembang** (*Developer mode*).
-4. Klik tombol **Muat yang belum dibongkar** (*Load unpacked*).
-5. Pilih folder `extension/` dari direktori proyek ini.
-6. Ekstensi siap digunakan dan otomatis terhubung ke Krolix.
+3. Enable the **Developer mode** toggle.
+4. Click **Load unpacked**.
+5. Select the `extension/` directory from this repository.
+6. The extension is now active and connected to Krolix.
 
 ---
 
-## Hak Cipta & Lisensi Komersial
+## Copyright & Commercial License
 
-Hak Cipta (c) 2026 Robert Kurniawan. Seluruh Hak Cipta Dilindungi Undang-Undang (*All Rights Reserved*).
+Copyright (c) 2026 Robert Kurniawan. All Rights Reserved.
 
-Perangkat lunak ini merupakan produk berpemilik (*proprietary*) dan komersial. Tidak disediakan lisensi open source untuk perangkat lunak ini. 
+This software and its associated source code, design assets, and compiled binaries are proprietary and commercial products. No open-source license is granted.
 
-Dilarang keras menyalin, mendistribusikan ulang, memodifikasi, mendekompilasi, menerbitkan ulang, atau memperjualbelikan kode sumber maupun biner aplikasi ini baik sebagian maupun keseluruhan tanpa izin tertulis resmi dari pemilik hak cipta.
+Unauthorized copying, distribution, modification, reverse engineering, decompilation, public display, or commercial exploitation of any portion of this software without prior written permission from the copyright holder is strictly prohibited.
 
-Untuk pembelian lisensi penggunaan, lisensi komersial, atau kerja sama bisnis, silakan hubungi pengembang secara langsung.
+To purchase a commercial license, obtain usage permissions, or discuss business inquiries, please contact the developer directly.

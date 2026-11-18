@@ -94,12 +94,6 @@ class LicenseManager:
         "TONEC-FAKE1-KEYGN-00000"
     }
 
-    # Authentic Pre-computed Default Reference Keys for:
-    # First: "Pengguna", Last: "Zero", Email: "user@krolix.app"
-    DEFAULT_PRO_KEY = "ZR8X9-K7W4Q-H35V4-E1QZG"
-    DEFAULT_MASTER_KEY = "ZMMST-K7W4Q-R7Z52-W23XM"
-    DEFAULT_KEYGEN_SAMPLE = "ZR8X9-K7W4Q-H35V4-KEY99"  # Catches keygen decoy trap!
-
     def __init__(self, db: Optional[Database] = None):
         self.db = db or Database.get_instance()
         self._pub_key_obj: Optional[ed25519.Ed25519PublicKey] = None
@@ -215,30 +209,6 @@ class LicenseManager:
             res.append(_B36_ALPHABET[num % 36])
             num //= 36
         return "".join(res)
-
-    @classmethod
-    def generate_idm_key(
-        cls,
-        name: str,
-        email: str,
-        is_master: bool = False,
-        seed_chars: str = "8X9",
-        b2: str = "K7W4Q",
-    ) -> str:
-        """
-        Generates an authentic 20-character standard-pattern serial key: XXXXX-XXXXX-XXXXX-XXXXX
-        """
-        norm_name = name.strip()
-        norm_email = email.strip().lower()
-
-        clean_seed = (seed_chars.strip().upper() + "ABC")[:3]
-        b1 = f"ZM{clean_seed}" if is_master else f"ZR{clean_seed}"
-        b2 = (b2.strip().upper() + "12345")[:5]
-
-        b3 = cls._compute_decoy_keygen_trap(b1, b2, norm_email)
-        b4 = cls._compute_crypto_seal(norm_name, norm_email, b1, b2, b3, is_master)
-
-        return f"{b1}-{b2}-{b3}-{b4}"
 
     def get_trial_days_remaining(self) -> int:
         if self.db.get_setting("trial_tamper_flag", ""):

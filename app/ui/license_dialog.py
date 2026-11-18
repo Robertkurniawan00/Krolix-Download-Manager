@@ -442,24 +442,6 @@ class LicenseRegistrationDialog(QDialog):
         if clip:
             self.txt_serial.setText(clip)
 
-    def _fill_pro_credentials(self):
-        self.txt_first_name.setText("Pengguna")
-        self.txt_last_name.setText("Krolix")
-        self.txt_email.setText("user@zerodownload.com")
-        self.txt_serial.setText(self.license_mgr.DEFAULT_PRO_KEY)
-
-    def _fill_master_credentials(self):
-        self.txt_first_name.setText("Pengguna")
-        self.txt_last_name.setText("Krolix")
-        self.txt_email.setText("user@zerodownload.com")
-        self.txt_serial.setText(self.license_mgr.DEFAULT_MASTER_KEY)
-
-    def _fill_keygen_fake_credentials(self):
-        self.txt_first_name.setText("Pengguna")
-        self.txt_last_name.setText("Krolix")
-        self.txt_email.setText("user@zerodownload.com")
-        self.txt_serial.setText(self.license_mgr.DEFAULT_KEYGEN_SAMPLE)
-
     def _do_register(self):
         first = self.txt_first_name.text().strip()
         last = self.txt_last_name.text().strip()

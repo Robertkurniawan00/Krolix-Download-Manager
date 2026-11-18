@@ -75,8 +75,8 @@ ENV/
 Thumbs.db
 Desktop.ini
 
-# Developer secret keys
+# Developer private tooling and secret keys
+tools/
 *.pem
 *.key
 dev_private_key.pem
-tools/*.pem

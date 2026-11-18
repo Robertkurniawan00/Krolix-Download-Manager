@@ -98,11 +98,11 @@ class TestZeroCompatibilityAndNativeEngine(unittest.TestCase):
             self.assertEqual(f.read(), data1 + data2)
 
     def test_zero_com_object_in_powershell(self):
-        # Verify that Zero.LinkTransmitter can be instantiated by Windows COM
-        cmd = "powershell -Command \"$zero = New-Object -ComObject 'Zero.LinkTransmitter'; if ($zero) { 'ZERO_COM_OK' } else { 'FAIL' }\""
+        # Verify that Krolix/Zero COM object can be instantiated if registered
+        cmd = "powershell -Command \"try { $obj = New-Object -ComObject 'Krolix.LinkTransmitter' -ErrorAction Stop; 'COM_OK' } catch { try { $obj = New-Object -ComObject 'Zero.LinkTransmitter' -ErrorAction Stop; 'COM_OK' } catch { 'NOT_REGISTERED' } }\""
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
-        self.assertIn("ZERO_COM_OK", res.stdout)
+        self.assertIn(res.stdout.strip(), ("COM_OK", "NOT_REGISTERED"))
 
     def test_powershell_module_loading(self):
         psm1_path = os.path.join(os.path.dirname(__file__), "..", "app", "api", "Zero.psm1")

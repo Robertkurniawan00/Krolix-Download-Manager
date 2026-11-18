@@ -13,7 +13,6 @@
   <img src="https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB?logo=python" alt="Python" />
   <img src="https://img.shields.io/badge/GUI-PyQt6-41CD52?logo=qt" alt="PyQt6" />
   <img src="https://img.shields.io/badge/Extension-Manifest%20V3-4285F4?logo=googlechrome" alt="Manifest V3" />
-  <img src="https://img.shields.io/badge/License-Proprietary-red.svg" alt="License" />
 </p>
 
 ---
@@ -134,15 +133,3 @@ DOWNLOAD MANAGER/
 4. Click **Load unpacked**.
 5. Select the `extension/` directory from this repository.
 6. The extension is now active and connected to Krolix.
-
----
-
-## Copyright & Commercial License
-
-Copyright (c) 2026 Robert Kurniawan. All Rights Reserved.
-
-This software and its associated source code, design assets, and compiled binaries are proprietary and commercial products. No open-source license is granted.
-
-Unauthorized copying, distribution, modification, reverse engineering, decompilation, public display, or commercial exploitation of any portion of this software without prior written permission from the copyright holder is strictly prohibited.
-
-To purchase a commercial license, obtain usage permissions, or discuss business inquiries, please contact the developer directly.

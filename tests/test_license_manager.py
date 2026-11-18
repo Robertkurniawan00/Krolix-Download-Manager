@@ -30,69 +30,11 @@ class TestLicenseManager(unittest.TestCase):
         self.assertFalse(self.mgr.is_master_mode())
         self.assertGreaterEqual(self.mgr.get_trial_days_remaining(), 29)
 
-    def test_idm_pattern_pro_validation(self):
-        name = "Pengguna Zero"
-        email = "user@zerodownload.com"
-        valid_pro_key = self.mgr.DEFAULT_PRO_KEY  # ZR8X9-K7W4Q-H35V4-E1QZG
-
-        # 1. Correct credentials -> Valid Pro
-        valid, code, msg = self.mgr.validate_serial_key("Pengguna", "Zero", email, valid_pro_key)
-        self.assertTrue(valid, msg)
-        self.assertEqual(code, "VALID_PRO")
-
-        # 2. Tampered email -> Invalid
-        valid_bad_email, _, _ = self.mgr.validate_serial_key("Pengguna", "Zero", "attacker@evil.com", valid_pro_key)
-        self.assertFalse(valid_bad_email)
-
-        # 3. Tampered name -> Invalid
-        valid_bad_name, _, _ = self.mgr.validate_serial_key("Hacker", "Pro", email, valid_pro_key)
-        self.assertFalse(valid_bad_name)
-
-    def test_advance_master_mode_activation(self):
-        name = "Pengguna Zero"
-        email = "user@zerodownload.com"
-        master_key = self.mgr.DEFAULT_MASTER_KEY  # ZMMST-K7W4Q-R7Z52-W23XM
-
-        valid, code, msg = self.mgr.validate_serial_key("Pengguna", "Zero", email, master_key)
-        self.assertTrue(valid, msg)
-        self.assertEqual(code, "VALID_MASTER")
-
-        # Perform registration
-        ok, reg_msg, reg_code = self.mgr.register("Pengguna", "Zero", email, master_key)
-        self.assertTrue(ok)
-        self.assertEqual(self.mgr.get_status(), LicenseStatus.MASTER_MODE)
-        self.assertTrue(self.mgr.is_master_mode())
-        self.assertTrue(self.mgr.is_full_version())
-
-        # Advance Master Mode unlocks 64 segments!
-        self.assertEqual(self.mgr.get_max_segments_allowed(), 64)
-        self.assertEqual(self.mgr.get_max_concurrent_allowed(), 64)
-
-        # Display info contains master badge
-        info = self.mgr.get_license_display_info()
-        self.assertTrue(info["is_master"])
-        self.assertIn("Advance Master Mode", info["status_title"])
-
-    def test_honeypot_keygen_detection(self):
-        """Simulates an attacker using a keygen that reversed the decoy polynomial."""
-        name = "Pengguna Zero"
-        email = "user@zerodownload.com"
-        fake_keygen_key = self.mgr.DEFAULT_KEYGEN_SAMPLE  # ZR8X9-K7W4Q-H35V4-KEY99
-
-        valid, code, msg = self.mgr.validate_serial_key("Pengguna", "Zero", email, fake_keygen_key)
-        self.assertFalse(valid)
-        self.assertEqual(code, "FAKE_SERIAL_KEYGEN")
-        self.assertIn("Keygen", msg)
-
-        # Registering with a keygen key sets status to FAKE_SERIAL
-        ok, _, reg_code = self.mgr.register("Pengguna", "Zero", email, fake_keygen_key)
-        self.assertFalse(ok)
-        self.assertEqual(reg_code, "FAKE_SERIAL_KEYGEN")
-        self.assertEqual(self.mgr.get_status(), LicenseStatus.FAKE_SERIAL)
-
-        # Features are immediately restricted
-        self.assertFalse(self.mgr.is_feature_allowed("site_grabber"))
-        self.assertEqual(self.mgr.get_max_segments_allowed(), 4)
+    def test_trial_feature_allowance(self):
+        self.assertTrue(self.mgr.is_feature_allowed("site_grabber"))
+        self.assertTrue(self.mgr.is_feature_allowed("scheduler"))
+        self.assertEqual(self.mgr.get_max_segments_allowed(), 32)
+        self.assertEqual(self.mgr.get_max_concurrent_allowed(), 32)
 
     def test_blacklisted_serial_detection(self):
         """Tests that notoriously leaked serial keys from cracking forums are caught immediately."""
@@ -104,6 +46,11 @@ class TestLicenseManager(unittest.TestCase):
         self.assertFalse(valid)
         self.assertEqual(code, "FAKE_SERIAL_BLACKLIST")
         self.assertIn("daftar hitam", msg)
+
+    def test_invalid_serial_format(self):
+        valid, code, msg = self.mgr.validate_serial_key("User", "Test", "user@test.com", "INVALID-SERIAL-FORMAT")
+        self.assertFalse(valid)
+        self.assertEqual(code, "INVALID_KEY")
 
     def test_database_tampering_defense(self):
         """Attacker manually modifies SQLite database to pretend to be Master Mode."""

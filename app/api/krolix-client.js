@@ -1,26 +1,26 @@
 /**
- * Zero Download Assistant - Official Node.js Automation & Client SDK
+ * Krolix Download Manager - Official Node.js Automation & Client SDK
  * 
- * Provides high-speed automation and integration with Zero Download Assistant:
+ * Provides high-speed automation and integration with Krolix Download Manager:
  * - Direct HTTP REST integration (port 9666)
  * - Automatic background process recovery / CLI dispatch
  * - Single link and batch array link forwarding
  * 
  * Usage in Node.js:
- *   const ZeroClient = require('./zero-client');
- *   const zero = new ZeroClient();
- *   await zero.download('https://example.com/file.zip', { silent: true });
+ *   const KrolixClient = require('./krolix-client');
+ *   const krolix = new KrolixClient();
+ *   await krolix.download('https://example.com/file.zip', { silent: true });
  * 
  * CLI Usage:
- *   node zero-client.js "https://fsn1-speed.hetzner.com/100MB.bin" --silent
+ *   node krolix-client.js "https://fsn1-speed.hetzner.com/100MB.bin" --silent
  */
 
 const http = require('http');
-const { spawn, execFile } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-class ZeroClient {
+class KrolixClient {
     constructor(options = {}) {
         this.host = options.host || '127.0.0.1';
         this.port = options.port || 9666;
@@ -28,7 +28,7 @@ class ZeroClient {
     }
 
     /**
-     * Check if Zero Download Assistant is running.
+     * Check if Krolix Download Manager is running.
      */
     async getStatus() {
         return new Promise((resolve) => {
@@ -58,7 +58,7 @@ class ZeroClient {
     }
 
     /**
-     * Sends a download task to Zero.
+     * Sends a download task to Krolix.
      * @param {string} url 
      * @param {object} options { saveDir, filename, referer, cookies, userAgent, silent, queueOnly }
      */
@@ -89,7 +89,7 @@ class ZeroClient {
                 headers: {
                     'Content-Type': 'application/json; charset=utf-8',
                     'Content-Length': Buffer.byteLength(postBody),
-                    'X-Zero-Client': 'nodejs-sdk'
+                    'X-Krolix-Client': 'nodejs-sdk'
                 },
                 timeout: this.timeout
             }, (res) => {
@@ -103,14 +103,12 @@ class ZeroClient {
                             resolve({ success: true, method: 'REST', raw: body });
                         }
                     } else {
-                        // REST failed, fallback to CLI
                         this._fallbackCli(payload).then(resolve).catch(reject);
                     }
                 });
             });
 
             req.on('error', () => {
-                // If connection refused, Zero might be offline, launch CLI
                 this._fallbackCli(payload).then(resolve).catch(reject);
             });
 
@@ -150,7 +148,7 @@ class ZeroClient {
                 headers: {
                     'Content-Type': 'application/json; charset=utf-8',
                     'Content-Length': Buffer.byteLength(postBody),
-                    'X-Zero-Client': 'nodejs-sdk'
+                    'X-Krolix-Client': 'nodejs-sdk'
                 },
                 timeout: this.timeout
             }, (res) => {
@@ -171,12 +169,12 @@ class ZeroClient {
         });
     }
 
-    _findZeroExe() {
+    _findKrolixExe() {
         const localAppData = process.env.LOCALAPPDATA || '';
         const candidates = [
-            path.join(localAppData, 'Programs', 'Zero Download Assistant', 'Zero.exe'),
-            path.resolve(__dirname, '..', '..', 'Zero.exe'),
-            path.resolve(__dirname, '..', '..', 'dist', 'Zero', 'Zero.exe')
+            path.join(localAppData, 'Programs', 'Krolix Download Manager', 'Krolix.exe'),
+            path.resolve(__dirname, '..', '..', 'Krolix.exe'),
+            path.resolve(__dirname, '..', '..', 'dist', 'Krolix', 'Krolix.exe')
         ];
 
         for (const c of candidates) {
@@ -187,9 +185,9 @@ class ZeroClient {
 
     _fallbackCli(payload) {
         return new Promise((resolve, reject) => {
-            const zeroExe = this._findZeroExe();
-            if (!zeroExe) {
-                return reject(new Error('Zero.exe not found and REST server is offline.'));
+            const krolixExe = this._findKrolixExe();
+            if (!krolixExe) {
+                return reject(new Error('Krolix.exe not found and REST server is offline.'));
             }
 
             const args = ['/d', payload.url];
@@ -198,7 +196,7 @@ class ZeroClient {
             if (payload.silent) args.push('/n');
             if (payload.queue_only) args.push('/a');
 
-            const child = spawn(zeroExe, args, {
+            const child = spawn(krolixExe, args, {
                 detached: true,
                 stdio: 'ignore'
             });
@@ -213,16 +211,16 @@ class ZeroClient {
 if (require.main === module) {
     const args = process.argv.slice(2);
     if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
-        console.log('Zero Download Assistant - Node.js SDK & CLI');
-        console.log('Usage: node zero-client.js <URL> [--silent] [--queue] [--dir <path>] [--filename <name>] [--status]');
+        console.log('Krolix Download Manager - Node.js SDK & CLI');
+        console.log('Usage: node krolix-client.js <URL> [--silent] [--queue] [--dir <path>] [--filename <name>] [--status]');
         process.exit(0);
     }
 
-    const client = new ZeroClient();
+    const client = new KrolixClient();
 
     if (args.includes('--status')) {
         client.getStatus().then(status => {
-            console.log('Zero Status:', JSON.stringify(status, null, 2));
+            console.log('Krolix Status:', JSON.stringify(status, null, 2));
             process.exit(0);
         });
     } else {
@@ -240,14 +238,14 @@ if (require.main === module) {
 
         client.download(url, options)
             .then(res => {
-                console.log('[Zero Node.js] Download dispatched successfully:', res);
+                console.log('[Krolix Node.js] Download dispatched successfully:', res);
                 process.exit(0);
             })
             .catch(err => {
-                console.error('[Zero Node.js Error]', err.message);
+                console.error('[Krolix Node.js Error]', err.message);
                 process.exit(1);
             });
     }
 }
 
-module.exports = ZeroClient;
+module.exports = KrolixClient;

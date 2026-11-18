@@ -1,18 +1,18 @@
 <#
 .SYNOPSIS
-    Zero Download Assistant - Official PowerShell Automation Module
+    Krolix Download Manager - Official PowerShell Automation Module
 .DESCRIPTION
     Provides high-performance native cmdlets for integrating, automating, and controlling
-    Zero Download Assistant via COM and REST endpoints from PowerShell.
+    Krolix Download Manager via COM and REST endpoints from PowerShell.
 .EXAMPLE
-    Start-ZeroDownload -Url "https://fsn1-speed.hetzner.com/100MB.bin"
+    Start-KrolixDownload -Url "https://fsn1-speed.hetzner.com/100MB.bin"
 .EXAMPLE
-    Start-ZeroDownload -Url "https://example.com/video.mp4" -Silent -Path "D:\Videos"
+    Start-KrolixDownload -Url "https://example.com/video.mp4" -Silent -Path "D:\Videos"
 .EXAMPLE
-    Get-ZeroStatus
+    Get-KrolixStatus
 #>
 
-function Start-ZeroDownload {
+function Start-KrolixDownload {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
@@ -43,9 +43,12 @@ function Start-ZeroDownload {
     process {
         Write-Verbose "Dispatching download request for: $Url"
 
-        # 1. Try COM Automation (Zero COM Interface)
+        # 1. Try COM Automation (Krolix COM Interface)
         try {
-            $comObj = New-Object -ComObject 'Zero.LinkTransmitter' -ErrorAction Stop
+            $comObj = $null
+            try { $comObj = New-Object -ComObject 'Krolix.LinkTransmitter' -ErrorAction Stop }
+            catch { $comObj = New-Object -ComObject 'Zero.LinkTransmitter' -ErrorAction Stop }
+
             if ($comObj) {
                 $flags = 0
                 if ($Silent.IsPresent) { $flags = $flags -bor 1 }
@@ -66,7 +69,7 @@ function Start-ZeroDownload {
                 )
 
                 if ($res -eq 0) {
-                    Write-Host "[Zero PowerShell] Dispatched via COM Automation successfully: $Url" -ForegroundColor Green
+                    Write-Host "[Krolix PowerShell] Dispatched via COM Automation successfully: $Url" -ForegroundColor Green
                     return [PSCustomObject]@{
                         Success = $true
                         Method  = "COM"
@@ -96,11 +99,11 @@ function Start-ZeroDownload {
                 -Method Post `
                 -ContentType "application/json; charset=utf-8" `
                 -Body $payload `
-                -Headers @{ "X-Zero-Client" = "powershell-module" } `
+                -Headers @{ "X-Krolix-Client" = "powershell-module" } `
                 -TimeoutSec 3 `
                 -ErrorAction Stop
 
-            Write-Host "[Zero PowerShell] Dispatched via REST API successfully: $Url" -ForegroundColor Green
+            Write-Host "[Krolix PowerShell] Dispatched via REST API successfully: $Url" -ForegroundColor Green
             return [PSCustomObject]@{
                 Success  = $true
                 Method   = "REST"
@@ -109,12 +112,12 @@ function Start-ZeroDownload {
             }
         }
         catch {
-            Write-Warning "Could not communicate with running Zero instance. Attempting CLI launch..."
+            Write-Verbose "Could not communicate with running Krolix instance. Attempting CLI launch..."
         }
 
-        # 3. Fallback: Launch Zero executable directly via CLI
-        $localExe = [System.IO.Path]::Combine($env:LOCALAPPDATA, "Programs", "Zero Download Assistant", "Zero.exe")
-        $rootExe = [System.IO.Path]::Combine((Split-Path (Split-Path $PSScriptRoot -Parent) -Parent), "Zero.exe")
+        # 3. Fallback: Launch Krolix executable directly via CLI
+        $localExe = [System.IO.Path]::Combine($env:LOCALAPPDATA, "Programs", "Krolix Download Manager", "Krolix.exe")
+        $rootExe = [System.IO.Path]::Combine((Split-Path (Split-Path $PSScriptRoot -Parent) -Parent), "Krolix.exe")
 
         $targetExe = $null
         if (Test-Path $localExe) { $targetExe = $localExe }
@@ -128,7 +131,7 @@ function Start-ZeroDownload {
             if ($QueueOnly.IsPresent) { $argsList += "/a" }
 
             Start-Process -FilePath $targetExe -ArgumentList $argsList
-            Write-Host "[Zero PowerShell] Started Zero process via CLI: $Url" -ForegroundColor Cyan
+            Write-Host "[Krolix PowerShell] Started Krolix process via CLI: $Url" -ForegroundColor Cyan
             return [PSCustomObject]@{
                 Success = $true
                 Method  = "CLI"
@@ -136,7 +139,7 @@ function Start-ZeroDownload {
             }
         }
 
-        Write-Error "Failed to dispatch download to Zero Download Assistant."
+        Write-Error "Failed to dispatch download to Krolix Download Manager."
         return [PSCustomObject]@{
             Success = $false
             Url     = $Url
@@ -144,7 +147,7 @@ function Start-ZeroDownload {
     }
 }
 
-function Add-ZeroQueue {
+function Add-KrolixQueue {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
@@ -155,11 +158,11 @@ function Add-ZeroQueue {
         [string]$Filename = ""
     )
     process {
-        Start-ZeroDownload -Url $Url -Path $Path -Filename $Filename -QueueOnly
+        Start-KrolixDownload -Url $Url -Path $Path -Filename $Filename -QueueOnly
     }
 }
 
-function Get-ZeroStatus {
+function Get-KrolixStatus {
     [CmdletBinding()]
     param()
     try {
@@ -174,9 +177,14 @@ function Get-ZeroStatus {
     catch {
         return [PSCustomObject]@{
             Online  = $false
-            Message = "Zero is not currently running or HTTP API port 9666 is closed."
+            Message = "Krolix is not currently running or HTTP API port 9666 is closed."
         }
     }
 }
 
-Export-ModuleMember -Function Start-ZeroDownload, Add-ZeroQueue, Get-ZeroStatus
+# Aliases for backward compatibility
+Set-Alias -Name Start-ZeroDownload -Value Start-KrolixDownload
+Set-Alias -Name Add-ZeroQueue -Value Add-KrolixQueue
+Set-Alias -Name Get-ZeroStatus -Value Get-KrolixStatus
+
+Export-ModuleMember -Function Start-KrolixDownload, Add-KrolixQueue, Get-KrolixStatus -Alias Start-ZeroDownload, Add-ZeroQueue, Get-ZeroStatus

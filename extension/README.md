@@ -1,19 +1,16 @@
-# Zero Download Assistant - Ekstensi Browser (Floating Video Engine)
+# Krolix Download Manager - Browser Extension (Floating Video Engine)
 
-Ekstensi ini mengintegrasikan browser (Google Chrome, Microsoft Edge, Brave, Opera) langsung dengan **Zero Download Assistant**:
-- **Floating Video Download Bar**: Muncul otomatis di atas pemutar video (YouTube, Vimeo, TikTok, dan video web HTML5 lainnya) untuk langsung mengunduh video atau audio dengan satu klik.
-- **Sniffer Aliran Media**: Otomatis mendeteksi stream `.mp4`, `.webm`, `.m3u8` (HLS), dan file audio.
-- **Intersepsi Unduhan Otomatis**: Menangkap unduhan browser standar dan mengalihkannya ke Zero Download Assistant dengan akselerasi multi-koneksi.
+This extension integrates your browser (Google Chrome, Microsoft Edge, Brave, Opera) directly with **Krolix Download Manager**:
+- **Floating Video Action Panel**: Appears automatically above video players (YouTube, Vimeo, TikTok, and other HTML5 web videos) to download video or audio with one click.
+- **Media Stream Sniffer**: Automatically intercepts `.mp4`, `.webm`, `.m3u8` (HLS), and audio streams.
+- **Seamless Interception**: Captures browser downloads and redirects them to Krolix Download Manager with multi-segment acceleration.
 
-## Cara Pemasangan / Pembaruan (Hanya 1 Menit):
-1. Buka browser Anda (Chrome / Edge / Brave).
-2. Buka halaman ekstensi:
+## Installation Instructions:
+1. Open your browser (Chrome / Edge / Brave).
+2. Navigate to the extensions page:
    - Chrome / Brave: `chrome://extensions`
    - Edge: `edge://extensions`
-3. Aktifkan **Developer mode** (Mode Pengembang) di pojok kanan atas.
-4. Jika ekstensi sudah pernah dimuat:
-   - Cukup klik tombol **ikon Refresh / Muat ulang ⟳** pada kartu ekstensi *Zero Download Assistant Integration*.
-5. Jika belum pernah dimuat:
-   - Klik tombol **Load unpacked** (Muat yang belum dibongkar).
-   - Pilih folder ini: `D:\Project FIX\DOWNLOAD MANAGER\extension`.
-6. Selesai! Saat Anda memutar video di YouTube atau web lainnya, tombol floating **"Download this video"** akan muncul di sudut pemutar video.
+3. Enable **Developer mode** in the top-right corner.
+4. Click **Load unpacked**.
+5. Select this folder: `D:\Project FIX\DOWNLOAD MANAGER\extension`.
+6. When playing videos, the floating download panel will appear above the player.

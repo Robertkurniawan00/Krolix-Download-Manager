@@ -1,5 +1,5 @@
 """
-Comprehensive Automated Test Suite for Zero Download Assistant
+Comprehensive Automated Test Suite for Krolix Download Manager
 """
 import os
 import sys

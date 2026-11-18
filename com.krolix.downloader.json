@@ -1,0 +1,13 @@
+{
+  "name": "com.krolix.downloader",
+  "description": "Krolix Download Manager Native Messaging Host",
+  "path": "C:\\Users\\Roku\\AppData\\Local\\Programs\\Krolix Download Manager\\Krolix.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://dlmghihibfmgdfjkcfedcecdljoeamah/",
+    "chrome-extension://fmphmjmdhgpbhmkekcbfhpfhjhckjclh/",
+    "chrome-extension://ndcpkimcihhghdcddljkfmmjccdmcmof/",
+    "chrome-extension://bcfcjeddkhklkknmfhckpiigablapbab/",
+    "chrome-extension://admccjkmockfdflocgggjfgdacdodkdf/"
+  ]
+}

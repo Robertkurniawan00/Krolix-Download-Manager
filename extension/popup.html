@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Krolix Download Assistant</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto, sans-serif;
+    }
+
+    body {
+      width: 380px;
+      min-height: 240px;
+      max-height: 580px;
+      background: #0b0f19;
+      color: #f1f5f9;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* Top Accent Line */
+    .top-rim {
+      height: 3px;
+      background: linear-gradient(90deg, #10b981, #2563eb, #3b82f6);
+      width: 100%;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: #0f172a;
+      border-bottom: 1px solid #1e293b;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      display: block;
+      object-fit: contain;
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.35);
+    }
+
+    .brand-text {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .brand-name {
+      font-size: 13px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: 0.3px;
+    }
+
+    .brand-sub {
+      font-size: 10px;
+      color: #94a3b8;
+    }
+
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 12px;
+      background: rgba(16, 185, 129, 0.12);
+      color: #10b981;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 6px #10b981;
+    }
+
+    .status-offline {
+      background: rgba(239, 68, 68, 0.12);
+      color: #ef4444;
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+
+    .status-offline .status-dot {
+      background: #ef4444;
+      box-shadow: 0 0 6px #ef4444;
+    }
+
+    /* Section Bar */
+    .section-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px;
+      background: #090d16;
+      border-bottom: 1px solid #1e293b;
+      font-size: 11px;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .section-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .section-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-mini {
+      background: #131b2e;
+      color: #94a3b8;
+      border: 1px solid #1e293b;
+      border-radius: 5px;
+      padding: 2px 7px;
+      font-size: 10px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-mini:hover {
+      color: #f8fafc;
+      border-color: #2563eb;
+      background: #172138;
+    }
+
+    .btn-mini.active {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+
+    .badge-count {
+      background: #10b981;
+      color: #ffffff;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    /* Streams Container */
+    .streams-list {
+      flex: 1;
+      overflow-y: auto;
+      max-height: 380px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .streams-list::-webkit-scrollbar {
+      width: 5px;
+    }
+
+    .streams-list::-webkit-scrollbar-thumb {
+      background: #1e293b;
+      border-radius: 3px;
+    }
+
+    /* Stream Item Card */
+    .stream-card {
+      background: #131b2e;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      transition: all 0.15s ease;
+    }
+
+    .stream-card:hover {
+      border-color: #334155;
+      background: #172138;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    }
+
+    .stream-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .stream-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: #f8fafc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      direction: rtl;
+      text-align: left;
+    }
+
+    .stream-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    .pill {
+      font-size: 9px;
+      font-weight: 800;
+      padding: 2px 5px;
+      border-radius: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .pill-hls {
+      background: rgba(37, 99, 235, 0.2);
+      color: #60a5fa;
+      border: 1px solid rgba(37, 99, 235, 0.4);
+    }
+
+    .pill-dash {
+      background: rgba(168, 85, 247, 0.2);
+      color: #c084fc;
+      border: 1px solid rgba(192, 132, 252, 0.4);
+    }
+
+    .pill-direct {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+
+    .stream-size {
+      font-size: 10px;
+      color: #64748b;
+    }
+
+    .card-btns {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-shrink: 0;
+    }
+
+    .btn-copy {
+      background: #0f172a;
+      color: #94a3b8;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+
+    .btn-copy:hover {
+      color: #f8fafc;
+      border-color: #2563eb;
+      background: #172138;
+    }
+
+    /* Download Button */
+    .btn-download {
+      background: #10b981;
+      color: #ffffff;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .btn-download:hover {
+      background: #059669;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);
+    }
+
+    .btn-download:active {
+      transform: translateY(0);
+    }
+
+    .btn-download.sent {
+      background: #3b82f6;
+    }
+
+    /* Empty State */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 16px;
+      text-align: center;
+      gap: 8px;
+    }
+
+    .empty-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: #131b2e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 4px;
+      color: #64748b;
+    }
+
+    .empty-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #94a3b8;
+    }
+
+    .empty-desc {
+      font-size: 11px;
+      color: #475569;
+      max-width: 260px;
+      line-height: 1.4;
+    }
+
+    /* Footer Controls */
+    .footer {
+      background: #0f172a;
+      border-top: 1px solid #1e293b;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+    }
+
+    .toggle-label {
+      font-size: 11px;
+      color: #cbd5e1;
+      font-weight: 500;
+    }
+
+    /* Switch Style */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 32px;
+      height: 18px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #334155;
+      transition: .2s;
+      border-radius: 18px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .2s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider {
+      background-color: #10b981;
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(14px);
+    }
+    .license-badge {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      font-weight: 800;
+      padding: 1px 5px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      line-height: 1.2;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+
+    .badge-master {
+      background: linear-gradient(135deg, #b45309, #f59e0b);
+      color: #fffbeb;
+      box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+      border: 1px solid rgba(251, 191, 36, 0.6);
+    }
+
+    .badge-pro {
+      background: linear-gradient(135deg, #059669, #10b981);
+      color: #ffffff;
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+      border: 1px solid rgba(52, 211, 153, 0.5);
+    }
+  </style>
+</head>
+<body>
+  <div class="top-rim"></div>
+
+  <div class="header">
+    <div class="brand">
+      <img class="brand-icon" src="icon32.png" alt="Krolix">
+      <div class="brand-text">
+        <div style="display: flex; align-items: center;">
+          <span class="brand-name">Krolix Assistant</span>
+          <span class="license-badge" id="licenseBadge">PRO</span>
+        </div>
+        <span class="brand-sub">High-Speed Video Engine</span>
+      </div>
+    </div>
+    <div class="connection-status" id="connectionBadge">
+      <span class="status-dot"></span>
+      <span id="connectionText">App Active</span>
+    </div>
+  </div>
+
+  <div class="section-bar">
+    <div class="section-left">
+      <span>Captured Streams</span>
+      <span class="badge-count" id="badgeCount">0</span>
+    </div>
+    <div class="section-actions">
+      <button class="btn-mini active" id="btnSmartGroup" title="Automatically collapse duplicate low-res sub-playlists">Smart Dedup</button>
+      <button class="btn-mini" id="btnClearStreams" title="Clear captured streams for this tab">Clear</button>
+    </div>
+  </div>
+
+  <div class="streams-list" id="streamsList">
+    <!-- Stream Cards injected dynamically -->
+  </div>
+
+  <div class="footer">
+    <label class="toggle-wrap" for="toggleIntercept">
+      <div class="switch">
+        <input type="checkbox" id="toggleIntercept" checked>
+        <span class="slider"></span>
+      </div>
+      <span class="toggle-label">Intercept Browser Downloads</span>
+    </label>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

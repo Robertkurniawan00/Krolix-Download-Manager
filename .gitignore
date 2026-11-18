@@ -1,0 +1,82 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# C# / .NET compilation outputs
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+
+# PyInstaller / Build artifacts
+build/
+dist/
+*.spec
+_internal/
+
+# Standalone archives & large binaries (Exceeds GitHub 100MB limit)
+*.zip
+*.tar.gz
+*.7z
+*.rar
+*.exe
+*.dll
+
+# Allow native engine source and small bridge binaries
+!app/native/KrolixNativeEngine.cs
+!app/native/KrolixComBridge.cs
+!app/native/KrolixNativeEngine.exe
+!app/native/KrolixComBridge.dll
+!app/assets/bin/KrolixNativeEngine.exe
+!app/assets/bin/KrolixComBridge.dll
+
+# Local databases and runtime state
+*.db
+*.db-journal
+*.sqlite3
+*.log
+crash.log
+
+# Temporary download files and test artifacts
+*.part
+*.tmp
+*.temp
+*.crdownload
+*.aria2
+*.torrent
+test_yt_out/
+scratch/
+
+# Video and media files
+*.mp4
+*.mkv
+*.webm
+*.avi
+*.mov
+*.ts
+*.m4s
+
+# Virtual Environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# IDE and Editor configurations
+.vscode/
+.idea/
+.vs/
+*.swp
+*.swo
+*~
+Thumbs.db
+Desktop.ini
+
+# Developer secret keys
+*.pem
+*.key
+dev_private_key.pem
+tools/*.pem

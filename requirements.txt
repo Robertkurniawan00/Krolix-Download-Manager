@@ -1,0 +1,11 @@
+# Zero Download Assistant - Core Dependencies
+PyQt6>=6.5.0
+pyperclip>=1.8.2
+yt-dlp>=2024.8.6
+PySocks>=1.7.1
+cryptography>=42.0.0
+curl_cffi>=0.7.0
+certifi>=2024.0.0
+
+# Windows Integration
+pywin32>=306; sys_platform == 'win32'

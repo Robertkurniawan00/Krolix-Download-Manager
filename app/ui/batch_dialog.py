@@ -16,7 +16,7 @@ from ..utils.helpers import get_category_from_ext, sanitize_filename
 class BatchDialog(QDialog):
     def __init__(self, initial_urls=None, initial_items=None, default_save_dir=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Unduh Massal / Batch & Pattern - Zero Assistant")
+        self.setWindowTitle("Unduh Massal / Batch & Pattern - Krolix Download Manager")
         self.resize(750, 520)
         self.generated_urls = []
         self.default_save_dir = default_save_dir or os.path.join(os.path.expanduser("~"), "Downloads")
@@ -69,8 +69,7 @@ class BatchDialog(QDialog):
         # Target dir
         dir_row = QHBoxLayout()
         dir_row.addWidget(QLabel("Simpan ke:"))
-        default_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-        self.dir_input = QLineEdit(default_dir)
+        self.dir_input = QLineEdit(self.default_save_dir)
         browse_btn = QPushButton("Pilih...")
         browse_btn.clicked.connect(self._browse_dir)
         dir_row.addWidget(self.dir_input, 1)

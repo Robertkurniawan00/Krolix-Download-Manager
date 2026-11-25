@@ -11,9 +11,11 @@ import time
 import json
 import uuid
 import hashlib
+import threading
 import urllib.request
 import urllib.parse
 from typing import Optional, List, Dict, Tuple
+from ..utils.helpers import sanitize_filename
 
 DEFAULT_DESKTOP_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -49,14 +51,15 @@ API_DRIVE_HOSTS = ["api-drive.mypikpak.net", "api-drive.mypikpak.com"]
 
 class PikPakResolver:
     _device_id: Optional[str] = None
-    _cached_captcha_token: Optional[str] = None
-    _captcha_expiry: float = 0.0
+    _captcha_cache: Dict[str, Tuple[str, float]] = {}
+    _lock = threading.RLock()
 
     @classmethod
     def get_device_id(cls) -> str:
-        if not cls._device_id:
-            cls._device_id = uuid.uuid4().hex
-        return cls._device_id
+        with cls._lock:
+            if not cls._device_id:
+                cls._device_id = uuid.uuid4().hex
+            return cls._device_id
 
     @staticmethod
     def is_pikpak_url(url: str) -> bool:
@@ -119,8 +122,10 @@ class PikPakResolver:
         handshake with user.mypikpak.net/com.
         """
         now = time.time()
-        if not force_refresh and cls._cached_captcha_token and now < cls._captcha_expiry:
-            return cls._cached_captcha_token
+        with cls._lock:
+            cached = cls._captcha_cache.get(action)
+            if not force_refresh and cached and now < cached[1]:
+                return cached[0]
 
         device_id = cls.get_device_id()
         ts = str(int(now * 1000))
@@ -157,15 +162,17 @@ class PikPakResolver:
                     data = json.loads(resp.read().decode("utf-8"))
                     token = data.get("captcha_token")
                     if token:
-                        cls._cached_captcha_token = token
                         expires_in = int(data.get("expires_in") or 300)
-                        cls._captcha_expiry = now + max(60, expires_in - 30)
+                        with cls._lock:
+                            cls._captcha_cache[action] = (token, now + max(60, expires_in - 30))
                         return token
             except Exception as e:
                 last_err = e
 
-        if cls._cached_captcha_token:
-            return cls._cached_captcha_token
+        with cls._lock:
+            cached = cls._captcha_cache.get(action)
+            if cached:
+                return cached[0]
         raise RuntimeError(f"Gagal menginisialisasi PikPak anonymous captcha token: {last_err}")
 
     @classmethod
@@ -291,7 +298,7 @@ class PikPakResolver:
                             "raw_file": f
                         })
                 for folder in sub_folders:
-                    folder_name = folder.get("name", "folder")
+                    folder_name = sanitize_filename(folder.get("name", "folder")) or "folder"
                     sub_path = f"{path_prefix}/{folder_name}" if path_prefix else folder_name
                     _list_recursive(folder.get("id"), sub_path)
 

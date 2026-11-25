@@ -18,7 +18,7 @@ def get_native_engine_path() -> str:
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "native", "KrolixNativeEngine.exe")),
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "assets", "bin", "KrolixNativeEngine.exe")),
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "KrolixNativeEngine.exe")),
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "dist", "Zero", "KrolixNativeEngine.exe")),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "dist", "Krolix", "KrolixNativeEngine.exe")),
         os.path.expandvars(r"%LOCALAPPDATA%\Programs\Krolix Download Manager\KrolixNativeEngine.exe")
     ]
     for c in candidates:
@@ -153,22 +153,55 @@ class SegmentWorker(threading.Thread):
 
     def _get_opener(self):
         handlers = []
+        ssl_ctx = None
+        try:
+            from urllib.parse import urlparse as _urlp
+            host = _urlp(self.url).hostname or ""
+            ssl_ctx = SSLManager.get_instance().get_ssl_context(host)
+        except Exception:
+            pass
+
         if self.proxy:
             proxy_clean = self.proxy.strip()
-            # Support socks proxies (requires PySocks)
+            # Support per-connection SOCKS proxies without mutating global socket.socket
             if proxy_clean.startswith("socks"):
                 try:
                     import socks
-                    proxy_type = socks.SOCKS5 if "socks5" in proxy_clean else socks.SOCKS4
+                    import http.client
                     from urllib.parse import urlparse as _up
+                    proxy_type = socks.SOCKS5 if "socks5" in proxy_clean else socks.SOCKS4
                     p = _up(proxy_clean)
-                    if hasattr(socks, "SocksiPyHandler"):
-                        handlers.append(socks.SocksiPyHandler(proxy_type, p.hostname, p.port or 1080, True, p.username, p.password))
-                    else:
-                        socks.set_default_proxy(proxy_type, p.hostname, p.port or 1080,
-                                                username=p.username, password=p.password)
-                        import socket
-                        socket.socket = socks.socksocket
+                    p_host, p_port, p_user, p_pass = p.hostname, (p.port or 1080), p.username, p.password
+
+                    class _SocksHTTPConn(http.client.HTTPConnection):
+                        def connect(self):
+                            sock = socks.socksocket()
+                            sock.set_proxy(proxy_type, p_host, p_port, True, p_user, p_pass)
+                            if self.timeout is not None:
+                                sock.settimeout(self.timeout)
+                            sock.connect((self.host, self.port))
+                            self.sock = sock
+
+                    class _SocksHTTPSConn(http.client.HTTPSConnection):
+                        def connect(self):
+                            sock = socks.socksocket()
+                            sock.set_proxy(proxy_type, p_host, p_port, True, p_user, p_pass)
+                            if self.timeout is not None:
+                                sock.settimeout(self.timeout)
+                            sock.connect((self.host, self.port))
+                            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+                    class _SocksHTTPHandler(urllib.request.HTTPHandler):
+                        def http_open(self, req):
+                            return self.do_open(_SocksHTTPConn, req)
+
+                    class _SocksHTTPSHandler(urllib.request.HTTPSHandler):
+                        def https_open(self, req):
+                            return self.do_open(lambda host, **kw: _SocksHTTPSConn(host, context=self._context, **kw), req)
+
+                    handlers.append(_SocksHTTPHandler())
+                    handlers.append(_SocksHTTPSHandler(context=ssl_ctx))
+                    return urllib.request.build_opener(*handlers)
                 except Exception:
                     pass
             else:
@@ -176,13 +209,8 @@ class SegmentWorker(threading.Thread):
                     'http': proxy_clean,
                     'https': proxy_clean
                 }))
-        try:
-            from urllib.parse import urlparse as _urlp
-            host = _urlp(self.url).hostname or ""
-            ctx = SSLManager.get_instance().get_ssl_context(host)
-            handlers.append(urllib.request.HTTPSHandler(context=ctx))
-        except Exception:
-            pass
+        if ssl_ctx is not None:
+            handlers.append(urllib.request.HTTPSHandler(context=ssl_ctx))
         return urllib.request.build_opener(*handlers)
 
 
@@ -232,6 +260,17 @@ class SegmentWorker(threading.Thread):
                             raw_sock._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
                     except Exception:
                         pass
+                    # Verify Range honoring: if Range was requested (curr_start > 0) and server returned 200 OK instead of 206,
+                    # reset write position to 0 for segment 0 (or fail if secondary segment) to prevent file corruption
+                    resp_status = getattr(response, "status", getattr(response, "code", 200))
+                    if "Range" in req_headers and curr_start > 0 and resp_status == 200:
+                        if self.segment.index == 0:
+                            curr_start = 0
+                            self.segment.start_byte = 0
+                            self.segment.downloaded_bytes = 0
+                        else:
+                            raise Exception("Server mengabaikan header Range (mengembalikan HTTP 200 saat resume segmen)")
+
                     # Dynamically discover Content-Length or Content-Range total size if unknown
                     cr_header = response.headers.get("Content-Range")
                     cl_header = response.headers.get("Content-Length")
@@ -350,7 +389,7 @@ class SegmentWorker(threading.Thread):
                     return
 
                 # Auto-recovery for 403 Forbidden / 410 Gone / expired CDN tokens
-                if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403, 410):
+                if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403, 410) and retries < self.max_retries:
                     try:
                         fresh_url, fresh_headers = CloudLinkResolver.resolve_stream_url(self.url, self.headers)
                         if fresh_url != self.url or fresh_headers != self.headers:
@@ -362,13 +401,14 @@ class SegmentWorker(threading.Thread):
                                     self.on_url_refreshed(fresh_url, fresh_headers)
                                 except Exception:
                                     pass
+                            retries += 1
                             time.sleep(1)
                             continue
                     except Exception as res_err:
                         print(f"[SegmentWorker] Failed to auto-recover stream: {res_err}")
 
                 # Auto-recovery for DNS / URLError or domain migration
-                if isinstance(e, urllib.error.URLError) or "11001" in str(e):
+                if (isinstance(e, urllib.error.URLError) or "11001" in str(e)) and retries < self.max_retries:
                     try:
                         resolved_url = CloudLinkResolver.resolve(self.url)
                         if resolved_url != self.url:
@@ -379,6 +419,7 @@ class SegmentWorker(threading.Thread):
                                     self.on_url_refreshed(resolved_url, self.headers)
                                 except Exception:
                                     pass
+                            retries += 1
                             time.sleep(1)
                             continue
                     except Exception:

@@ -26,6 +26,32 @@
 
   let scanInterval = null;
   let observer = null;
+  let showVideoPanelOpt = true;
+  let captureHlsOpt = true;
+
+  try {
+    if (isExtensionValid() && chrome.storage?.local) {
+      chrome.storage.local.get({ showVideoPanel: true, captureHls: true }, (res) => {
+        showVideoPanelOpt = res?.showVideoPanel !== false;
+        captureHlsOpt = res?.captureHls !== false;
+        if (!showVideoPanelOpt && activePanel) {
+          activePanel.classList.remove("zero-visible");
+        }
+      });
+      chrome.storage.onChanged?.addListener((changes, area) => {
+        if (area !== "local") return;
+        if (changes.showVideoPanel) {
+          showVideoPanelOpt = changes.showVideoPanel.newValue !== false;
+          if (!showVideoPanelOpt && activePanel) {
+            activePanel.classList.remove("zero-visible");
+          }
+        }
+        if (changes.captureHls) {
+          captureHlsOpt = changes.captureHls.newValue !== false;
+        }
+      });
+    }
+  } catch (e) {}
 
   function isExtensionValid() {
     try {
@@ -441,47 +467,6 @@
     return false;
   }
 
-  // Handle background requests, e.g. "Download all links with Zero"
-  if (isExtensionValid()) {
-    try {
-      chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-        if (request && request.type === "EXTRACT_PAGE_LINKS") {
-          const links = new Set();
-          const items = [];
-
-          // 1. Collect anchor links (excluding ads)
-          const anchors = document.querySelectorAll("a[href]");
-          anchors.forEach((a) => {
-            const href = a.href;
-            if (href && (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("ftp://") || href.startsWith("magnet:"))) {
-              if (!links.has(href) && !isAdOrJunkMedia(href)) {
-                links.add(href);
-                const desc = (a.innerText || "").trim().slice(0, 120) || a.title || "";
-                items.push({ url: href, description: desc });
-              }
-            }
-          });
-
-          // 2. Collect media elements (excluding ad videos and junk previews)
-          const media = document.querySelectorAll("img[src], video[src], audio[src], source[src]");
-          media.forEach((m) => {
-            const src = m.src;
-            if (src && (src.startsWith("http://") || src.startsWith("https://")) && !links.has(src)) {
-              const parentVid = m.tagName === "SOURCE" ? m.closest("video") : (m.tagName === "VIDEO" ? m : null);
-              if (!isAdOrJunkMedia(src) && (!parentVid || !isAdVideoElement(parentVid))) {
-                links.add(src);
-                const desc = (m.alt || m.title || "").trim().slice(0, 120);
-                items.push({ url: src, description: desc });
-              }
-            }
-          });
-
-          sendResponse({ items: items.slice(0, 500) });
-          return true;
-        }
-      });
-    } catch (e) {}
-  }
 
   function isFragment(url) {
     if (!url) return true;
@@ -781,6 +766,9 @@
   // Handle stream detected from any source
   async function handleStreamDetected(mediaPayload) {
     if (!mediaPayload || !mediaPayload.url) return;
+    if (!captureHlsOpt && (mediaPayload.is_hls || mediaPayload.is_dash || (mediaPayload.url || "").toLowerCase().includes(".m3u8") || (mediaPayload.url || "").toLowerCase().includes(".mpd"))) {
+      return;
+    }
     if (isAdOrJunkMedia(mediaPayload.url, mediaPayload.name, mediaPayload)) return;
     const u = mediaPayload.url;
     if (isFragment(u)) return;
@@ -1210,19 +1198,20 @@
     });
 
     // Close button
+    let lastCloseTrigger = 0;
     const triggerClose = (e) => {
       if (e) {
         e.stopPropagation();
         if (e.preventDefault) e.preventDefault();
       }
+      const now = Date.now();
+      if (now - lastCloseTrigger < 300) return;
+      lastCloseTrigger = now;
       isDismissedForCurrentUrl = true;
       hidePanel(container, true);
     };
 
     closeBtn.addEventListener("click", triggerClose);
-    closeBtn.addEventListener("pointerup", (e) => {
-      if (e.button === 0) triggerClose(e);
-    });
 
     // Hover management
     container.addEventListener("mouseenter", () => {
@@ -1486,13 +1475,13 @@
         item.innerHTML = `
           <div class="zero-float-item-left">
             <span class="zero-float-media-icon">${isAudio ? AUDIO_ICON_SVG : VIDEO_ICON_SVG}</span>
-            <span class="zero-float-res-text">${resLabel}</span>
+            <span class="zero-float-res-text">${escapeHtml(resLabel)}</span>
             ${pillTag}
           </div>
           <div class="zero-float-item-right">
-            ${bitrateStr ? `<span class="zero-float-col zero-col-bitrate">${bitrateStr}</span>` : ""}
-            <span class="zero-float-col zero-col-size">${sizeStr}</span>
-            <span class="zero-float-col zero-col-ext">${extStr}</span>
+            ${bitrateStr ? `<span class="zero-float-col zero-col-bitrate">${escapeHtml(bitrateStr)}</span>` : ""}
+            <span class="zero-float-col zero-col-size">${escapeHtml(sizeStr)}</span>
+            <span class="zero-float-col zero-col-ext">${escapeHtml(extStr)}</span>
           </div>
         `;
 
@@ -1572,13 +1561,13 @@
         item.innerHTML = `
           <div class="zero-float-item-left">
             <span class="zero-float-media-icon">${VIDEO_ICON_SVG}</span>
-            <span class="zero-float-res-text" title="${resLabel}">${resLabel}</span>
+            <span class="zero-float-res-text" title="${escapeHtml(resLabel)}">${escapeHtml(resLabel)}</span>
             ${pillTag}
           </div>
           <div class="zero-float-item-right">
-            ${bitrateStr ? `<span class="zero-float-col zero-col-bitrate">${bitrateStr}</span>` : ""}
-            <span class="zero-float-col zero-col-size">${sizeStr}</span>
-            <span class="zero-float-col zero-col-ext">${extStr}</span>
+            ${bitrateStr ? `<span class="zero-float-col zero-col-bitrate">${escapeHtml(bitrateStr)}</span>` : ""}
+            <span class="zero-float-col zero-col-size">${escapeHtml(sizeStr)}</span>
+            <span class="zero-float-col zero-col-ext">${escapeHtml(extStr)}</span>
           </div>
         `;
 
@@ -1607,7 +1596,19 @@
         e.stopPropagation();
         if (menu && menu.classList) menu.classList.remove("zero-menu-open");
         isMenuOpen = false;
-        if (sortedStreams.length > 0) {
+        if (sortedStreams.length > 1) {
+          const cleanTitle = (title || "Video").replace(/[\\/*?:"<>|]/g, "_").trim();
+          const batchItems = sortedStreams.map((st, idx) => ({
+            url: st.url,
+            filename: st.name || `${cleanTitle}_stream_${idx + 1}.${st.ext || "mp4"}`,
+            description: st.display_name || st.resolution || ""
+          }));
+          safeSendMessage({
+            action: "BATCH_DOWNLOAD_STREAMS",
+            referer: window.location.href,
+            items: batchItems
+          });
+        } else if (sortedStreams.length === 1) {
           triggerStreamDownload(sortedStreams[0], title, sortedStreams[0].name || "Video");
         }
       });
@@ -1811,8 +1812,8 @@
 
     // Collect fallback variant URLs from streams detected on this page
     const fallbackUrls = [];
-    if (typeof detectedStreams !== "undefined" && detectedStreams && detectedStreams.size > 0) {
-      for (const st of detectedStreams.values()) {
+    if (typeof sniffedStreams !== "undefined" && sniffedStreams.length > 0) {
+      for (const st of sniffedStreams) {
         if (st && st.url && st.url !== stream.url && (st.is_hls || (st.url && st.url.includes(".m3u8")))) {
           fallbackUrls.push(st.url);
         }
@@ -2042,9 +2043,11 @@
             const lastSeg = pathSegs[pathSegs.length - 1] || "video";
             const bytes = entry.encodedBodySize || entry.transferSize || -1;
 
+            let segName = lastSeg;
+            try { segName = decodeURIComponent(lastSeg); } catch (e) {}
             handleStreamDetected({
               url: name,
-              name: decodeURIComponent(lastSeg),
+              name: segName,
               ext: isHls ? "m3u8" : (isDash ? "mpd" : "mp4"),
               is_hls: isHls,
               is_dash: isDash,
@@ -2089,9 +2092,11 @@
         if (isHls || isDash || isDirect) {
           const pathSegs = cleanPath.split("/");
           const lastSeg = pathSegs[pathSegs.length - 1] || "video";
+          let segName = lastSeg;
+          try { segName = decodeURIComponent(lastSeg); } catch (e) {}
           handleStreamDetected({
             url: vSrc,
-            name: decodeURIComponent(lastSeg),
+            name: segName,
             ext: isHls ? "m3u8" : (isDash ? "mpd" : "mp4"),
             height: v.videoHeight || 0,
             duration: v.duration || 0,
@@ -2119,7 +2124,9 @@
       if (v.offsetWidth >= 160 && v.offsetHeight >= 90) {
         if (!isAdVideoElement(v)) {
           observeVideoElement(v);
-          attachPanelToVideo(v, true);
+          if (showVideoPanelOpt) {
+            attachPanelToVideo(v, true);
+          }
           return;
         }
       }
@@ -2135,7 +2142,7 @@
           entries.forEach((entry) => {
             if (entry.isIntersecting && entry.intersectionRatio >= 0.15) {
               const targetVid = entry.target;
-              if (!isAdVideoElement(targetVid) && targetVid.offsetWidth >= 160 && targetVid.offsetHeight >= 90) {
+              if (showVideoPanelOpt && !isAdVideoElement(targetVid) && targetVid.offsetWidth >= 160 && targetVid.offsetHeight >= 90) {
                 attachPanelToVideo(targetVid, true);
               }
             }
@@ -2200,7 +2207,14 @@
     observer.observe(document.documentElement, { childList: true, subtree: true });
   } catch (e) {}
 
-  // Close dropdown menu when clicking outside
+  // Close dropdown menu when clicking outside or window loses focus
+  window.addEventListener("blur", () => {
+    if (activePanel && isMenuOpen) {
+      const menu = activePanel.querySelector(".zero-float-menu");
+      if (menu && menu.classList) menu.classList.remove("zero-menu-open");
+      isMenuOpen = false;
+    }
+  });
   window.addEventListener("click", (e) => {
     if (!isExtensionValid()) {
       cleanupOrphanedScript();

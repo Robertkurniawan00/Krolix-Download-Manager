@@ -1,6 +1,9 @@
 import os
 import sys
 import time
+import json
+import ssl
+import http.client
 import shutil
 import tempfile
 import threading
@@ -536,6 +539,8 @@ class HLSInspector:
 
         # Check if m3u8_content was already provided by browser extension
         inline_m3u8 = req_headers.get("m3u8_content") or ""
+        content = ""
+        effective_url = url
         if inline_m3u8 and "#EXTM3U" in inline_m3u8:
             HLSInspector.cache_playlist(url, inline_m3u8)
             content, effective_url = inline_m3u8, url
@@ -1091,6 +1096,10 @@ class HLSWorker(threading.Thread):
             return
         self._is_cancelled = True
         self._stop_recording_requested = True
+        if self.cancel_event:
+            self.cancel_event.set()
+        if self.pause_event:
+            self.pause_event.set()
         if self._proc:
             try:
                 if self._proc.stdin:
@@ -2786,7 +2795,8 @@ class HLSWorker(threading.Thread):
         """
         Stage 2 Fallback: Multi-threaded yt-dlp with concurrent fragments & rolling speed smoothing.
         """
-        temp_ytdlp_dir = os.path.join(tempfile.gettempdir(), f"z_{self.task_id[:8]}")
+        safe_tid = (self.task_id or hashlib.md5(self.url.encode("utf-8", errors="ignore")).hexdigest())[:8]
+        temp_ytdlp_dir = os.path.join(tempfile.gettempdir(), f"z_{safe_tid}")
         try:
             _ensure_valid_certifi()
             import yt_dlp
@@ -3001,7 +3011,7 @@ class HLSWorker(threading.Thread):
             self._proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True,
                 creationflags=flag,
                 startupinfo=sinfo
@@ -3719,7 +3729,7 @@ class HLSWorker(threading.Thread):
 
                                         try:
                                             if self.speed_limiter and self.speed_limiter.is_enabled:
-                                                self.speed_limiter.throttle(len(seg_bytes))
+                                                self.speed_limiter.acquire(len(seg_bytes))
 
                                             f_video.write(seg_bytes)
                                             f_video.flush()
@@ -3862,7 +3872,7 @@ class HLSWorker(threading.Thread):
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True,
                 creationflags=flag,
                 startupinfo=sinfo
@@ -4292,7 +4302,7 @@ class HLSWorker(threading.Thread):
                             data = self._strip_stream_obfuscation(data)
 
                             if self.speed_limiter and self.speed_limiter.is_enabled:
-                                self.speed_limiter.throttle(len(data))
+                                self.speed_limiter.acquire(len(data))
 
                             tmp_path = file_path + ".tmp"
                             with open(tmp_path, "wb") as f_out:

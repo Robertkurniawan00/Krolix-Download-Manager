@@ -9,7 +9,7 @@ import urllib.parse
 from typing import List, Dict
 
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox, QPlainTextEdit,
     QFileDialog, QMessageBox, QFrame, QButtonGroup, QApplication
 )
@@ -303,7 +303,10 @@ class BatchSnifferDialog(QDialog):
 
     def _scan_links(self):
         text = self.txt_raw.toPlainText()
-        if not text:
+        if not text or not text.strip():
+            self.raw_items = []
+            self._update_counts()
+            self._filter_by_category(self.current_category)
             return
 
         # Regex for standard URLs & Magnets

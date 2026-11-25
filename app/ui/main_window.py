@@ -10,6 +10,7 @@ Features:
 """
 
 import os
+import re
 import sys
 import subprocess
 import time
@@ -74,6 +75,8 @@ class BridgeSignals(QObject):
     batch_requested = pyqtSignal(dict)
     watchlist_updated = pyqtSignal(dict)
     watchlist_recording_started = pyqtSignal(dict, object)
+    exit_requested = pyqtSignal()
+    run_on_main = pyqtSignal(object)
 
 
 class KrolixMacOSTitleBar(QWidget):
@@ -934,7 +937,8 @@ class KrolixDetailsDrawer(QWidget):
             self.lbl_speed.setText("0.0 KB/s")
             return
 
-        status = getattr(task, "status", "").lower()
+        raw_status = getattr(task, "status", "")
+        status = (raw_status.value if hasattr(raw_status, "value") else str(raw_status)).lower()
         if status in ("downloading", "active"):
             self.dot.setStyleSheet("background-color: #22c55e; border-radius: 3px;")
         elif status == "paused":
@@ -947,18 +951,26 @@ class KrolixDetailsDrawer(QWidget):
             self.dot.setStyleSheet("background-color: #71717a; border-radius: 3px;")
 
         self.lbl_file.setText(getattr(task, "filename", "Unduhan"))
-        speed = getattr(task, "speed_str", "0.0 KB/s") or "0.0 KB/s"
-        self.lbl_speed.setText(speed)
+        self.lbl_dest.setText(getattr(task, "save_dir", "") or "")
 
-        size_str = getattr(task, "size_str", "") or ""
-        done_str = getattr(task, "downloaded_str", "") or ""
-        if size_str and done_str:
+        is_active = status in ("downloading", "active")
+        spd = getattr(task, "speed", 0) or 0
+        self.lbl_speed.setText(format_speed(spd) if is_active else "0.0 KB/s")
+
+        total_b = getattr(task, "total_bytes", 0) or 0
+        done_b = getattr(task, "downloaded_bytes", 0) or 0
+        size_str = format_bytes(total_b) if total_b > 0 else "--"
+        done_str = format_bytes(done_b) if done_b >= 0 else "0 B"
+        if total_b > 0:
             self.lbl_ratio.setText(f"{done_str} / {size_str}")
+        elif done_b > 0:
+            self.lbl_ratio.setText(done_str)
         else:
-            self.lbl_ratio.setText(size_str)
+            self.lbl_ratio.setText("")
 
-        eta = getattr(task, "eta_str", "") or ""
-        self.lbl_eta.setText(f"ETA {eta}" if eta else "")
+        eta_sec = getattr(task, "eta", 0) or 0
+        eta_txt = format_eta(eta_sec) if (is_active and eta_sec > 0) else ""
+        self.lbl_eta.setText(f"ETA {eta_txt}" if (eta_txt and eta_txt != "--") else "")
 
 
 class KrolixEmptyStateOverlay(QWidget):
@@ -1073,6 +1085,11 @@ class MainWindow(QMainWindow):
         if win_icon and not win_icon.isNull():
             self.setWindowIcon(win_icon)
         apply_taskbar_icon(self)
+        try:
+            self._cached_hwnd = int(self.winId())
+        except Exception:
+            self._cached_hwnd = 0
+        self._is_light_theme = False
 
         self._active_dialogs = {}
         self._complete_dialogs = {}
@@ -1087,12 +1104,15 @@ class MainWindow(QMainWindow):
         self.engine.on_task_updated = lambda t: self.signals.task_updated.emit(t)
         self.engine.on_task_completed = lambda t: self.signals.task_completed.emit(t)
         self.engine.on_task_failed = lambda t, err: self.signals.task_failed.emit(t, err or "Failed")
+        self.engine.on_exit_requested = lambda: self.signals.exit_requested.emit()
         self.signals.task_updated.connect(self._on_task_updated)
         self.signals.task_completed.connect(self._on_task_completed)
         self.signals.task_failed.connect(self._on_task_failed)
         self.signals.url_detected.connect(self._prompt_add_url)
         self.signals.download_requested.connect(self._handle_incoming_download)
         self.signals.batch_requested.connect(self._handle_incoming_batch_download)
+        self.signals.exit_requested.connect(self._force_quit)
+        self.signals.run_on_main.connect(lambda fn: fn() if callable(fn) else None)
 
         # Initialize Queue Manager, Scheduler, Watchlist & Tray Service
         self.queue_mgr = QueueManager(self.engine, self.db)
@@ -1110,6 +1130,7 @@ class MainWindow(QMainWindow):
         self.tray = TrayService(self)
         self.tray.show_window_requested.connect(self._restore_from_tray)
         self.tray.hide_window_requested.connect(self.hide)
+        self.tray.add_url_requested.connect(lambda: self._show_add_dialog())
         self.tray.pause_all_requested.connect(self._stop_all)
         self.tray.resume_all_requested.connect(self._resume_all)
         self.tray.exit_requested.connect(self._confirm_force_quit)
@@ -1165,7 +1186,7 @@ class MainWindow(QMainWindow):
 
         act_ytdlp = tasks_menu.addAction("Download dari YouTube & Media Sosial... (YT-DLP)")
         act_ytdlp.setShortcut(QKeySequence("Ctrl+Y"))
-        act_ytdlp.triggered.connect(self._show_ytdlp_dialog)
+        act_ytdlp.triggered.connect(lambda: self._show_ytdlp_dialog())
 
         act_batch = tasks_menu.addAction("Add batch download...")
         act_batch.triggered.connect(self._show_batch_dialog)
@@ -1178,7 +1199,7 @@ class MainWindow(QMainWindow):
         act_sniffer.triggered.connect(lambda: self._show_batch_sniffer_dialog())
 
         act_grabber = tasks_menu.addAction("Run site grabber")
-        act_grabber.triggered.connect(self._show_media_dialog)
+        act_grabber.triggered.connect(lambda: self._show_site_grabber_dialog())
 
         act_watchlist = tasks_menu.addAction(fluent_icons.create_fluent_live_icon("#f43f5e"), "Live Stream Watchlist & Auto-Recorder...")
         act_watchlist.setShortcut(QKeySequence("Ctrl+Shift+L"))
@@ -1382,6 +1403,13 @@ class MainWindow(QMainWindow):
         act_update.triggered.connect(lambda: QMessageBox.information(self, "Quick Update", "You are using the latest version of Krolix Download Manager v2.8."))
 
         help_menu.addSeparator()
+        self.act_registration = help_menu.addAction("Registration...")
+        self.act_registration.triggered.connect(self._show_license_dialog)
+
+        self.act_buy = help_menu.addAction("Order Full Version Online...")
+        self.act_buy.triggered.connect(self._order_license_online)
+
+        help_menu.addSeparator()
         act_about = help_menu.addAction("About Krolix")
         act_about.triggered.connect(self._show_about_dialog)
 
@@ -1534,7 +1562,7 @@ class MainWindow(QMainWindow):
 
     def _init_shortcuts(self):
         from PyQt6.QtGui import QKeySequence, QShortcut
-        # Primary global hotkeys (QAction shortcuts like Ctrl+N and Delete are bound via menu items)
+        # Primary global hotkeys (menu QActions already handle Ctrl+N/Y/D/T/U/P/W, Ctrl+Shift+B/L/S, F2, Delete)
         QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self._show_settings)
         QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(self._focus_search)
         QShortcut(QKeySequence("Ctrl+K"), self).activated.connect(self._focus_search)
@@ -1543,13 +1571,6 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._on_escape_pressed)
         QShortcut(QKeySequence("Space"), self.table).activated.connect(self._toggle_pause_selected)
         QShortcut(QKeySequence("Ctrl+V"), self).activated.connect(self._paste_from_clipboard)
-        QShortcut(QKeySequence("Ctrl+T"), self).activated.connect(lambda: self._show_torrent_search_dialog())
-        QShortcut(QKeySequence("Ctrl+Shift+S"), self).activated.connect(self._show_torrent_seeder_dialog)
-        QShortcut(QKeySequence("Ctrl+Y"), self).activated.connect(self._show_ytdlp_dialog)
-        QShortcut(QKeySequence("Ctrl+D"), self).activated.connect(self._show_dht_search_dialog)
-        QShortcut(QKeySequence("Ctrl+Shift+B"), self).activated.connect(self._show_batch_sniffer_dialog)
-        QShortcut(QKeySequence("Ctrl+U"), self).activated.connect(self._on_toolbar_refresh_link)
-        QShortcut(QKeySequence(Qt.Key.Key_Delete), self.table).activated.connect(self._delete_selected)
         QShortcut(QKeySequence("Shift+Delete"), self.table).activated.connect(lambda: self._delete_selected(delete_files=True))
 
     def _on_escape_pressed(self):
@@ -1594,6 +1615,7 @@ class MainWindow(QMainWindow):
             from .styles import get_app_stylesheet, ACCENTS, HEX_TO_ACCENT
             stylesheet = get_app_stylesheet(theme_id, accent_id)
             QApplication.instance().setStyleSheet(stylesheet)
+            self._is_light_theme = ("light" in str(theme_id).lower() or "white" in str(theme_id).lower())
 
             acc_key = HEX_TO_ACCENT.get(str(accent_id).lower(), str(accent_id).lower())
             acc_info = ACCENTS.get(acc_key, ACCENTS["chrome"])
@@ -1602,11 +1624,14 @@ class MainWindow(QMainWindow):
 
             FileNameDelegate.set_accent_color(acc_primary)
             ProgressSegmentsDelegate.set_accent_color(acc_primary)
+            FileNameDelegate.set_light_theme(self._is_light_theme)
+            ProgressSegmentsDelegate.set_light_theme(self._is_light_theme)
 
             if hasattr(self, "speed_graph"):
                 self.speed_graph.set_accent_color(acc_primary, acc_end)
 
             if hasattr(self, "table"):
+                self._populate_table()
                 self.table.viewport().update()
         except Exception as e:
             print("apply_theme error:", e)
@@ -1698,137 +1723,149 @@ class MainWindow(QMainWindow):
                 self._update_empty_state()
             return
 
-        row = self._find_row_by_id(task.id)
-        if row < 0:
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            self._update_empty_state()
+        was_sorting = self.table.isSortingEnabled()
+        if was_sorting:
+            self.table.setSortingEnabled(False)
+        try:
+            row = self._find_row_by_id(task.id)
+            if row < 0:
+                row = self.table.rowCount()
+                self.table.insertRow(row)
+                self._update_empty_state()
 
-        parsed = urllib.parse.urlparse(task.url)
-        domain = parsed.netloc or "direct-stream"
-        ext = Path(task.filename).suffix.lstrip(".").upper() or "FILE"
-        domain_subtext = f"{domain} • HTTP 206" if task.resumable else f"{domain} • Direct"
+            is_light = getattr(self, "_is_light_theme", False)
+            fg_primary = QColor("#1e293b") if is_light else QColor("#cbd5e1")
+            fg_active = QColor("#334155") if is_light else QColor("#94a3b8")
+            fg_muted = QColor("#64748b")
 
-        is_active = (task.status == DownloadStatus.DOWNLOADING)
+            parsed = urllib.parse.urlparse(task.url)
+            domain = parsed.netloc or "direct-stream"
+            ext = Path(task.filename).suffix.lstrip(".").upper() or "FILE"
+            domain_subtext = f"{domain} • HTTP 206" if task.resumable else f"{domain} • Direct"
 
-        # 0: File Name (Delegate)
-        it_name = SortableTableWidgetItem(task.filename, task.filename.lower())
-        it_name.setData(Qt.ItemDataRole.UserRole, {
-            "task_id": task.id,
-            "filename": task.filename,
-            "ext": ext,
-            "domain": domain_subtext,
-            "is_active": is_active
-        })
-        self.table.setItem(row, 0, it_name)
+            is_active = (task.status == DownloadStatus.DOWNLOADING)
 
-        # 1: Size
-        size_bytes = task.total_bytes if task.total_bytes > 0 else (task.downloaded_bytes if task.downloaded_bytes > 0 else 0)
-        size_str = format_bytes(task.total_bytes) if task.total_bytes > 0 else (format_bytes(task.downloaded_bytes) if task.downloaded_bytes > 0 else "--")
-        it_size = SortableTableWidgetItem(size_str, size_bytes)
-        it_size.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-        it_size.setForeground(QColor("#cbd5e1"))
-        self.table.setItem(row, 1, it_size)
+            # 0: File Name (Delegate)
+            it_name = SortableTableWidgetItem(task.filename, task.filename.lower())
+            it_name.setData(Qt.ItemDataRole.UserRole, {
+                "task_id": task.id,
+                "filename": task.filename,
+                "ext": ext,
+                "domain": domain_subtext,
+                "is_active": is_active
+            })
+            self.table.setItem(row, 0, it_name)
 
-        # 2: Status & Progress (Delegate)
-        streams_cnt = len(task.segments) if task.segments else 8
-        is_seeding = bool(task.is_torrent and is_active and (getattr(task, "is_seeding", False) or task.progress >= 100.0 or (task.upload_speed > 0 and task.speed == 0)))
+            # 1: Size
+            size_bytes = task.total_bytes if task.total_bytes > 0 else (task.downloaded_bytes if task.downloaded_bytes > 0 else 0)
+            size_str = format_bytes(task.total_bytes) if task.total_bytes > 0 else (format_bytes(task.downloaded_bytes) if task.downloaded_bytes > 0 else "--")
+            it_size = SortableTableWidgetItem(size_str, size_bytes)
+            it_size.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            it_size.setForeground(fg_primary)
+            self.table.setItem(row, 1, it_size)
 
-        if is_seeding:
-            streams_txt = f"Seeding (▲ {format_bytes(task.upload_speed)}/s)" if task.upload_speed > 0 else f"Seeding ({getattr(task, 'torrent_peers', 0)} peers)"
-        elif is_active:
-            streams_txt = f"{streams_cnt} streams"
-        elif task.status == DownloadStatus.COMPLETED:
-            streams_txt = "Complete"
-        else:
-            streams_txt = task.status.value
+            # 2: Status & Progress (Delegate)
+            streams_cnt = len(task.segments) if task.segments else 8
+            is_seeding = bool(task.is_torrent and is_active and (getattr(task, "is_seeding", False) or task.progress >= 100.0 or (task.upload_speed > 0 and task.speed == 0)))
 
-        prog_val = 100.0 if (is_seeding or task.status == DownloadStatus.COMPLETED) else task.progress
-        it_prog = SortableTableWidgetItem(streams_txt, prog_val)
-        it_prog.setData(Qt.ItemDataRole.UserRole, {
-            "progress": prog_val,
-            "streams_text": streams_txt,
-            "status": "Seeding" if is_seeding else task.status.value
-        })
-        self.table.setItem(row, 2, it_prog)
-
-        # 3: Time left
-        eta_val = 0 if task.status == DownloadStatus.COMPLETED else (task.eta if (is_active and task.eta) else 999999999)
-        eta_str = "Seeding" if is_seeding else (format_eta(task.eta) if is_active else ("--" if task.status != DownloadStatus.COMPLETED else "Complete"))
-        it_eta = SortableTableWidgetItem(eta_str, eta_val)
-        it_eta.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-        it_eta.setForeground(QColor("#94a3b8" if is_active else "#64748b"))
-        self.table.setItem(row, 3, it_eta)
-
-        # 4: Transfer rate (Soft chrome / metallic mint, not neon)
-        if is_seeding:
-            rate_val = task.upload_speed
-            rate_str = f"▲ {format_bytes(task.upload_speed)}/s"
-            it_rate = SortableTableWidgetItem(rate_str, rate_val)
-            it_rate.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-            it_rate.setForeground(QColor("#86efac"))  # Soft metallic mint
-            self.table.setItem(row, 4, it_rate)
-        else:
-            rate_val = task.speed if is_active else 0
-            if task.is_torrent and is_active and task.upload_speed > 0:
-                rate_str = f"▼ {format_bytes(task.speed)}/s  ▲ {format_bytes(task.upload_speed)}/s"
-            else:
-                rate_str = format_speed(task.speed) if is_active else "--"
-            it_rate = SortableTableWidgetItem(rate_str, rate_val)
-            it_rate.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-            it_rate.setForeground(QColor("#cbd5e1" if is_active else "#64748b"))
-            self.table.setItem(row, 4, it_rate)
-
-        # 5: Last Try Date
-        date_val = getattr(task, 'created_at', 0) or 0
-        created_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(task.created_at)) if hasattr(task, 'created_at') and task.created_at else "--"
-        it_date = SortableTableWidgetItem(created_str, date_val)
-        it_date.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-        it_date.setForeground(QColor("#64748b"))
-        self.table.setItem(row, 5, it_date)
-
-        # 6: Description (Empty by default, optional user note)
-        desc_str = getattr(task, 'description', '') or ''
-        it_desc = SortableTableWidgetItem(desc_str, desc_str.lower())
-        it_desc.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-        it_desc.setForeground(QColor("#cbd5e1" if desc_str else "#64748b"))
-        self.table.setItem(row, 6, it_desc)
-
-        # 7: Masa Seeding (1 - 31 Hari)
-        is_torrent = (
-            getattr(task, "is_torrent", False) or
-            (task.category or "").lower() in ["torrents", "torrent"] or
-            (task.url and (task.url.lower().startswith("magnet:") or ".torrent" in task.url.lower()))
-        )
-
-        seed_sort_val = 0
-        if is_torrent:
-            configured_days = 3
-            if task.headers and "seed_duration_days" in task.headers:
-                try:
-                    configured_days = int(task.headers["seed_duration_days"])
-                except Exception:
-                    pass
             if is_seeding:
-                seed_str = f"Seeding ({configured_days} Hari)"
-                seed_col = QColor("#10b981")  # Emerald
+                streams_txt = f"Seeding (▲ {format_bytes(task.upload_speed)}/s)" if task.upload_speed > 0 else f"Seeding ({getattr(task, 'torrent_peers', 0)} peers)"
+            elif is_active:
+                streams_txt = f"{streams_cnt} streams"
             elif task.status == DownloadStatus.COMPLETED:
-                seed_str = f"{configured_days} Hari (Selesai)"
-                seed_col = QColor("#10b981")  # Emerald
+                streams_txt = "Complete"
             else:
-                seed_str = f"{configured_days} Hari"
-                seed_col = QColor("#cbd5e1")
-            seed_sort_val = configured_days
-        else:
-            seed_str = "--"
-            seed_col = QColor("#475569")
-            seed_sort_val = 0
+                streams_txt = task.status.value
 
-        it_seed = SortableTableWidgetItem(seed_str, seed_sort_val)
-        it_seed.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignCenter)
-        it_seed.setForeground(seed_col)
-        self.table.setItem(row, 7, it_seed)
-        self.table.setRowHidden(row, not self._task_matches_filters(task))
+            prog_val = 100.0 if (is_seeding or task.status == DownloadStatus.COMPLETED) else task.progress
+            it_prog = SortableTableWidgetItem(streams_txt, prog_val)
+            it_prog.setData(Qt.ItemDataRole.UserRole, {
+                "progress": prog_val,
+                "streams_text": streams_txt,
+                "status": "Seeding" if is_seeding else task.status.value
+            })
+            self.table.setItem(row, 2, it_prog)
+
+            # 3: Time left
+            eta_val = 0 if task.status == DownloadStatus.COMPLETED else (task.eta if (is_active and task.eta) else 999999999)
+            eta_str = "Seeding" if is_seeding else (format_eta(task.eta) if is_active else ("--" if task.status != DownloadStatus.COMPLETED else "Complete"))
+            it_eta = SortableTableWidgetItem(eta_str, eta_val)
+            it_eta.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            it_eta.setForeground(fg_active if is_active else fg_muted)
+            self.table.setItem(row, 3, it_eta)
+
+            # 4: Transfer rate (Soft chrome / metallic mint, not neon)
+            if is_seeding:
+                rate_val = task.upload_speed
+                rate_str = f"▲ {format_bytes(task.upload_speed)}/s"
+                it_rate = SortableTableWidgetItem(rate_str, rate_val)
+                it_rate.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+                it_rate.setForeground(QColor("#059669") if is_light else QColor("#86efac"))
+                self.table.setItem(row, 4, it_rate)
+            else:
+                rate_val = task.speed if is_active else 0
+                if task.is_torrent and is_active and task.upload_speed > 0:
+                    rate_str = f"▼ {format_bytes(task.speed)}/s  ▲ {format_bytes(task.upload_speed)}/s"
+                else:
+                    rate_str = format_speed(task.speed) if is_active else "--"
+                it_rate = SortableTableWidgetItem(rate_str, rate_val)
+                it_rate.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+                it_rate.setForeground(fg_primary if is_active else fg_muted)
+                self.table.setItem(row, 4, it_rate)
+
+            # 5: Last Try Date
+            date_val = getattr(task, 'created_at', 0) or 0
+            created_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(task.created_at)) if hasattr(task, 'created_at') and task.created_at else "--"
+            it_date = SortableTableWidgetItem(created_str, date_val)
+            it_date.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            it_date.setForeground(fg_muted)
+            self.table.setItem(row, 5, it_date)
+
+            # 6: Description (Empty by default, optional user note)
+            desc_str = getattr(task, 'description', '') or ''
+            it_desc = SortableTableWidgetItem(desc_str, desc_str.lower())
+            it_desc.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            it_desc.setForeground(fg_primary if desc_str else fg_muted)
+            self.table.setItem(row, 6, it_desc)
+
+            # 7: Masa Seeding (1 - 31 Hari)
+            is_torrent = (
+                getattr(task, "is_torrent", False) or
+                (task.category or "").lower() in ["torrents", "torrent"] or
+                (task.url and (task.url.lower().startswith("magnet:") or ".torrent" in task.url.lower()))
+            )
+
+            seed_sort_val = 0
+            if is_torrent:
+                configured_days = 3
+                if task.headers and "seed_duration_days" in task.headers:
+                    try:
+                        configured_days = int(task.headers["seed_duration_days"])
+                    except Exception:
+                        pass
+                if is_seeding:
+                    seed_str = f"Seeding ({configured_days} Hari)"
+                    seed_col = QColor("#059669") if is_light else QColor("#10b981")
+                elif task.status == DownloadStatus.COMPLETED:
+                    seed_str = f"{configured_days} Hari (Selesai)"
+                    seed_col = QColor("#059669") if is_light else QColor("#10b981")
+                else:
+                    seed_str = f"{configured_days} Hari"
+                    seed_col = fg_primary
+                seed_sort_val = configured_days
+            else:
+                seed_str = "--"
+                seed_col = QColor("#94a3b8") if is_light else QColor("#475569")
+                seed_sort_val = 0
+
+            it_seed = SortableTableWidgetItem(seed_str, seed_sort_val)
+            it_seed.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignCenter)
+            it_seed.setForeground(seed_col)
+            self.table.setItem(row, 7, it_seed)
+            self.table.setRowHidden(row, not self._task_matches_filters(task))
+        finally:
+            if was_sorting:
+                self.table.setSortingEnabled(True)
 
     def _find_row_by_id(self, task_id: str) -> int:
         for r in range(self.table.rowCount()):
@@ -2069,13 +2106,13 @@ class MainWindow(QMainWindow):
                 self.signals.task_updated.emit(video_task)
                 if self.db.get_setting("show_complete_dialog", "true") == "true":
                     self._show_completion_dialog(video_task)
-            QTimer.singleShot(0, _handle_main)
+            self.signals.run_on_main.emit(_handle_main)
 
         def on_mux_error(err):
             def _handle_err():
                 print(f"[!] Mux error for {video_task.filename}: {err}")
                 self.tray.show_notification("Krolix Download Manager", f"'{video_task.filename}' download complete.")
-            QTimer.singleShot(0, _handle_err)
+            self.signals.run_on_main.emit(_handle_err)
 
         AudioMuxer.mux_dash_pair_async(v_path, a_path, on_success=on_mux_success, on_error=on_mux_error)
 
@@ -2411,7 +2448,13 @@ class MainWindow(QMainWindow):
                     ".m3u8" in url.lower() or 
                     ".mpd" in url.lower()
                 )
-                headers = data.get("headers") or {}
+                headers = dict(data.get("headers") or {}) if isinstance(data.get("headers"), dict) else {}
+                if data.get("referer") and "Referer" not in headers:
+                    headers["Referer"] = str(data["referer"])
+                if data.get("user_agent") and "User-Agent" not in headers:
+                    headers["User-Agent"] = str(data["user_agent"])
+                if data.get("cookies") and "Cookie" not in headers:
+                    headers["Cookie"] = str(data["cookies"])
                 if data.get("masterUrl") or data.get("master_url"):
                     headers["master_url"] = data.get("masterUrl") or data.get("master_url")
                 if data.get("fallbackUrls") or data.get("fallback_urls"):
@@ -2485,6 +2528,7 @@ class MainWindow(QMainWindow):
                     variants=variants_list,
                     initial_description=data.get("description", "") or ""
                 )
+                dlg.mode_switch_requested.connect(self._handle_mode_switch)
                 self._current_add_dialog = dlg
                 dlg.raise_()
                 dlg.activateWindow()
@@ -2632,10 +2676,19 @@ class MainWindow(QMainWindow):
                     task = t
                     break
         if task:
-            self._resume_task(task)
-            self.lbl_status_main.setText(f"Mengunduh ulang: {task.filename}")
+            if task.status == DownloadStatus.COMPLETED:
+                self.engine.redownload_task(task.id)
+            else:
+                self._resume_task(task)
+            msg = f"Mengunduh ulang: {task.filename}"
+            self.lbl_status_main.setText(msg)
+            if hasattr(self, "drawer") and self.drawer:
+                self.drawer.show_status_message(msg)
         else:
-            self.lbl_status_main.setText("Pilih unduhan di tabel untuk diunduh ulang.")
+            msg = "Pilih unduhan di tabel untuk diunduh ulang."
+            self.lbl_status_main.setText(msg)
+            if hasattr(self, "drawer") and self.drawer:
+                self.drawer.show_status_message(msg)
 
     def _delete_selected(self, delete_files: bool = False):
         tasks = self._get_selected_tasks()
@@ -3326,13 +3379,31 @@ class MainWindow(QMainWindow):
             custom_dir = data.get("save_dir")
             save_dir = custom_dir if (custom_dir and os.path.isdir(custom_dir)) else default_dir
             queue_only = bool(data.get("queue_only"))
+            base_headers = {}
+            if data.get("referer"):
+                base_headers["Referer"] = str(data["referer"])
+            if data.get("user_agent"):
+                base_headers["User-Agent"] = str(data["user_agent"])
+            if data.get("cookies"):
+                base_headers["Cookie"] = str(data["cookies"])
+
             count = 0
             for it in items:
                 url = it.get("url") if isinstance(it, dict) else str(it)
                 if not url:
                     continue
-                fn = it.get("filename") or it.get("description") if isinstance(it, dict) else None
-                task = self.engine.create_task(url=url, save_dir=save_dir, filename=fn)
+                fn = it.get("filename") if isinstance(it, dict) else None
+                desc = (it.get("description", "") or "") if isinstance(it, dict) else ""
+                item_headers = dict(base_headers)
+                if isinstance(it, dict) and isinstance(it.get("headers"), dict):
+                    item_headers.update(it["headers"])
+                task = self.engine.create_task(
+                    url=url,
+                    save_dir=save_dir,
+                    filename=fn if fn else None,
+                    headers=item_headers or None,
+                    description=desc
+                )
                 self._insert_or_update_row(task)
                 if not queue_only:
                     self.engine.start_download(task.id)
@@ -4020,29 +4091,43 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _open_category_folder_by_name(self, cat_name: str):
-        from ..core.categories import CategoryManager
-        cm = CategoryManager(self.db)
-        p = cm.get_folder_for_category(cat_name)
+        from ..utils.helpers import get_default_download_dir
+        cat_key = (cat_name or "").strip().lower()
+        key_aliases = {
+            "compressed": "compressed",
+            "documents": "documents",
+            "music": "music",
+            "audio": "music",
+            "programs": "programs",
+            "video": "video",
+            "videos": "video",
+        }
+        mapped = key_aliases.get(cat_key, cat_key)
+        p = self.db.get_setting(f"category_dir_{mapped}", "")
+        if not p or not os.path.exists(p):
+            default_p = self.db.get_setting("default_save_path", "") or get_default_download_dir(mapped)
+            p = default_p if os.path.exists(default_p) else get_default_download_dir()
         if p and os.path.exists(p):
             try:
-                subprocess.Popen(f'explorer.exe "{p}"')
+                subprocess.Popen(["explorer.exe", os.path.normpath(p)])
             except Exception:
-                os.startfile(p)
-        else:
-            from ..utils.helpers import get_default_download_dir
-            default_p = self.db.get_setting("download_dir", "") or get_default_download_dir()
-            if os.path.exists(default_p):
                 try:
-                    subprocess.Popen(f'explorer.exe "{default_p}"')
+                    os.startfile(p)
                 except Exception:
-                    os.startfile(default_p)
+                    pass
 
     def _restore_from_tray(self):
+        was_max = self.isMaximized()
         self.setWindowState((self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
         self.show()
-        self.showNormal()
+        if not was_max:
+            self.showNormal()
         self.raise_()
         self.activateWindow()
+        try:
+            self._cached_hwnd = int(self.winId())
+        except Exception:
+            pass
 
         # Bring forward any active modal widget or child dialogs
         active_modal = QApplication.activeModalWidget()
@@ -4093,9 +4178,18 @@ class MainWindow(QMainWindow):
         self._is_quitting = True
         if hasattr(self, "watchlist_mgr") and self.watchlist_mgr:
             self.watchlist_mgr.stop()
+        if hasattr(self, "clip_monitor") and self.clip_monitor:
+            self.clip_monitor.stop()
         self._stop_all()
+        if hasattr(self, "engine") and self.engine:
+            try:
+                self.engine.stop()
+            except Exception:
+                pass
         self.api_server.stop()
         self.scheduler.running = False
+        if hasattr(self, "tray") and self.tray and getattr(self.tray, "tray_icon", None):
+            self.tray.tray_icon.hide()
         QApplication.quit()
 
     def closeEvent(self, event):
@@ -4194,9 +4288,7 @@ class MainWindow(QMainWindow):
     def _update_window_title(self):
         from ..core.license_manager import LicenseManager
         info = LicenseManager.get_instance(self.db).get_license_display_info()
-        if info.get("is_master"):
-            title = "Krolix Download Manager [ADVANCE MASTER MODE - 64 SEGMEN]"
-        elif info.get("is_full"):
+        if info.get("is_master") or info.get("is_full"):
             title = "Krolix Download Manager"
         elif info.get("is_fake"):
             title = "Krolix Download Manager (Serial Number Palsu / Keygen Terdeteksi!)"

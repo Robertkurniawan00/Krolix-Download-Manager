@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QInputDialog, QMessageBox,
     QPlainTextEdit
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from ..core.database import Database
 from ..utils.helpers import apply_windows_dark_titlebar, get_default_download_dir
 from ..core.ssl_manager import SSLManager
@@ -20,6 +20,8 @@ from .extension_dialog import ExtensionDialog
 
 
 class SettingsDialog(QDialog):
+    tracker_refreshed = pyqtSignal(bool, int, str)
+
     def __init__(self, db=None, speed_limiter=None, parent=None):
         super().__init__(parent)
         self.db = db or Database.get_instance()
@@ -28,6 +30,7 @@ class SettingsDialog(QDialog):
         self.setFixedWidth(730)
         self.setMinimumHeight(580)
         apply_windows_dark_titlebar(self)
+        self.tracker_refreshed.connect(self._on_trackers_refreshed)
         self.init_ui()
 
     def init_ui(self):
@@ -316,7 +319,10 @@ class SettingsDialog(QDialog):
         v_int.setSpacing(8)
 
         self.chk_clip = QCheckBox("Pantau Papan Klip (Clipboard URL Monitoring)")
-        self.chk_clip.setChecked(self.db.get_setting("monitor_clipboard", True) if "monitor_clipboard" in str(self.db.get_setting("monitor_clipboard", "")) else self.db.get_setting("clipboard_monitor", True))
+        _raw_clip = self.db.get_setting("monitor_clipboard", None)
+        if _raw_clip is None or str(_raw_clip) == "":
+            _raw_clip = self.db.get_setting("clipboard_monitor", "true")
+        self.chk_clip.setChecked(str(_raw_clip).lower() in ("true", "1", "yes"))
         v_int.addWidget(self.chk_clip)
 
         self.chk_always_on = QCheckBox("Mode Always-On Worker (Tetap aktif di latar belakang saat jendela ditutup)")
@@ -328,15 +334,15 @@ class SettingsDialog(QDialog):
         v_int.addWidget(self.chk_autostart)
 
         self.chk_tray = QCheckBox("Minimalkan ke System Tray saat ditutup")
-        self.chk_tray.setChecked(self.db.get_setting("minimize_to_tray", True))
+        self.chk_tray.setChecked(str(self.db.get_setting("minimize_to_tray", "true")).lower() in ("true", "1", "yes"))
         v_int.addWidget(self.chk_tray)
 
         self.chk_auto_extract = QCheckBox("Ekstrak otomatis file arsip (.zip, .rar, .tar) setelah selesai")
-        self.chk_auto_extract.setChecked(self.db.get_setting("auto_extract", False))
+        self.chk_auto_extract.setChecked(str(self.db.get_setting("auto_extract", "false")).lower() in ("true", "1", "yes"))
         v_int.addWidget(self.chk_auto_extract)
 
         self.chk_comp_dlg = QCheckBox("Tampilkan dialog notifikasi saat unduhan selesai")
-        self.chk_comp_dlg.setChecked(self.db.get_setting("show_complete_dialog", True))
+        self.chk_comp_dlg.setChecked(str(self.db.get_setting("show_complete_dialog", "true")).lower() in ("true", "1", "yes"))
         v_int.addWidget(self.chk_comp_dlg)
 
         self.chk_confirm_del = QCheckBox("Tampilkan dialog konfirmasi sebelum menghapus unduhan")
@@ -451,7 +457,7 @@ class SettingsDialog(QDialog):
 
         lbl_host_desc = QLabel(
             "Krolix menyediakan Native Messaging Host berkecepatan tinggi:\n"
-            "• com.zero.downloader (Ekstensi Krolix Downloader)\n"
+            "• com.krolix.downloader (Ekstensi Krolix Downloader)\n"
             "Terdaftar di Registry HKCU tanpa memerlukan izin Administrator."
         )
         lbl_host_desc.setStyleSheet("color: #cbd5e1; font-size: 11px; line-height: 1.4;")
@@ -526,11 +532,11 @@ class SettingsDialog(QDialog):
             proxies = self.db.get_proxies()
             if proxies:
                 for p in proxies:
-                    # Assuming proxy format is string or dict, handling string here
-                    proxy_val = p.get('url') if isinstance(p, dict) else str(p)
-                    self.cmb_proxy.addItem(proxy_val)
+                    proxy_val = self._format_proxy_entry(p)
+                    if proxy_val and self.cmb_proxy.findText(proxy_val) < 0:
+                        self.cmb_proxy.addItem(proxy_val)
         except Exception:
-            pass # Fallback if get_proxies fails or isn't implemented
+            pass
 
         current_proxy = self.db.get_setting("proxy_url", "")
         if current_proxy:
@@ -789,6 +795,22 @@ class SettingsDialog(QDialog):
             except Exception:
                 pass
 
+    @staticmethod
+    def _format_proxy_entry(p) -> str:
+        if isinstance(p, dict):
+            if p.get("url"):
+                return str(p["url"])
+            host = str(p.get("host", "") or "").strip()
+            port = p.get("port", "")
+            if not host or not port:
+                return ""
+            ptype = str(p.get("type", "http") or "http").lower()
+            user = str(p.get("username", "") or "").strip()
+            pwd = str(p.get("password", "") or "")
+            auth = f"{user}:{pwd}@" if user else ""
+            return f"{ptype}://{auth}{host}:{port}"
+        return str(p) if p else ""
+
     def _open_proxy_manager(self):
         dlg = ProxyManagerDialog(self.db, self)
         if dlg.exec():
@@ -799,8 +821,9 @@ class SettingsDialog(QDialog):
                 proxies = self.db.get_proxies()
                 if proxies:
                     for p in proxies:
-                        proxy_val = p.get('url') if isinstance(p, dict) else str(p)
-                        self.cmb_proxy.addItem(proxy_val)
+                        proxy_val = self._format_proxy_entry(p)
+                        if proxy_val and self.cmb_proxy.findText(proxy_val) < 0:
+                            self.cmb_proxy.addItem(proxy_val)
             except Exception:
                 pass
 
@@ -821,16 +844,16 @@ class SettingsDialog(QDialog):
         self.lbl_tracker_status.setText("Sedang memperbarui dari upstream GitHub...")
 
         def _on_done(ok, count, msg):
-            def _ui_update():
-                self.btn_refresh_trackers.setEnabled(True)
-                import time
-                t_str = time.strftime("%d/%m/%Y %H:%M", time.localtime())
-                self.lbl_tracker_status.setText(f"Aktif: {count} tracker (Pembaruan: {t_str})")
-                QMessageBox.information(self, "Tracker Diperbarui", msg)
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(0, _ui_update)
+            self.tracker_refreshed.emit(bool(ok), int(count or 0), str(msg or ""))
 
         tm.update_trackers_async(force=True, on_completed=_on_done)
+
+    def _on_trackers_refreshed(self, ok: bool, count: int, msg: str):
+        self.btn_refresh_trackers.setEnabled(True)
+        import time
+        t_str = time.strftime("%d/%m/%Y %H:%M", time.localtime())
+        self.lbl_tracker_status.setText(f"Aktif: {count} tracker (Pembaruan: {t_str})")
+        QMessageBox.information(self, "Tracker Diperbarui", msg)
 
     def _load_exceptions_list(self):
         self.list_exceptions.clear()
@@ -873,7 +896,7 @@ class SettingsDialog(QDialog):
         ok2 = register_native_messaging_host()
         ok3 = set_windows_autostart(True)
         if ok1 or ok2 or ok3:
-            QMessageBox.information(self, "Sukses", "Host integrasi browser (com.zero.downloader) berhasil didaftarkan ulang ke Registry Windows.")
+            QMessageBox.information(self, "Sukses", "Host integrasi browser (com.krolix.downloader) berhasil didaftarkan ulang ke Registry Windows.")
         else:
             QMessageBox.warning(self, "Peringatan", "Host integrasi mungkin memerlukan perizinan tambahan.")
 

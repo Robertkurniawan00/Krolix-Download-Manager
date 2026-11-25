@@ -73,6 +73,58 @@ void KrolixClient_Cleanup(void) {
     }
 }
 
+static void Krolix_JsonEscape(const char* src, char* dst, size_t dstSize) {
+    if (!dst || dstSize == 0) return;
+    if (!src) { dst[0] = '\0'; return; }
+    size_t di = 0;
+    for (size_t si = 0; src[si] != '\0' && di + 2 < dstSize; si++) {
+        unsigned char c = (unsigned char)src[si];
+        if (c == '\\' || c == '"') {
+            if (di + 2 >= dstSize) break;
+            dst[di++] = '\\';
+            dst[di++] = (char)c;
+        } else if (c == '\r') {
+            if (di + 2 >= dstSize) break;
+            dst[di++] = '\\'; dst[di++] = 'r';
+        } else if (c == '\n') {
+            if (di + 2 >= dstSize) break;
+            dst[di++] = '\\'; dst[di++] = 'n';
+        } else if (c == '\t') {
+            if (di + 2 >= dstSize) break;
+            dst[di++] = '\\'; dst[di++] = 't';
+        } else if (c < 0x20) {
+            continue;
+        } else {
+            dst[di++] = (char)c;
+        }
+    }
+    dst[di] = '\0';
+}
+
+BOOL KrolixClient_IsRunning(void) {
+    BOOL running = FALSE;
+    HINTERNET hOpen = InternetOpenA("KrolixClient-C", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    if (hOpen) {
+        HINTERNET hConnect = InternetConnectA(hOpen, "127.0.0.1", 9666, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+        if (hConnect) {
+            HINTERNET hReq = HttpOpenRequestA(hConnect, "GET", "/status", NULL, NULL, NULL, INTERNET_FLAG_NO_CACHE_WRITE, 0);
+            if (hReq) {
+                if (HttpSendRequestA(hReq, NULL, 0, NULL, 0)) {
+                    DWORD statusCode = 0;
+                    DWORD len = sizeof(statusCode);
+                    if (HttpQueryInfoA(hReq, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &statusCode, &len, NULL)) {
+                        if (statusCode == 200) running = TRUE;
+                    }
+                }
+                InternetCloseHandle(hReq);
+            }
+            InternetCloseHandle(hConnect);
+        }
+        InternetCloseHandle(hOpen);
+    }
+    return running;
+}
+
 BOOL KrolixClient_Download(const char* url, const char* path, const char* filename, DWORD flags) {
     if (!url || strlen(url) == 0) return FALSE;
 
@@ -85,29 +137,31 @@ BOOL KrolixClient_Download(const char* url, const char* path, const char* filena
 
     if (SUCCEEDED(hr)) {
         IDispatch* pDisp = NULL;
-        hr = CoCreateInstance(&clsid, NULL, CLSCTX_LOCAL_SERVER, IID_IDispatch, (void**)&pDisp);
+        hr = CoCreateInstance(&clsid, NULL, CLSCTX_ALL, IID_IDispatch, (void**)&pDisp);
         if (SUCCEEDED(hr) && pDisp) {
             OLECHAR* szMember = L"SendLink2";
             DISPID dispid;
             hr = pDisp->lpVtbl->GetIDsOfNames(pDisp, &IID_NULL, &szMember, 1, LOCALE_USER_DEFAULT, &dispid);
             if (SUCCEEDED(hr)) {
-                // Prepare BSTR arguments
+                // Prepare BSTR arguments (SysAllocStringLen allocates char count without counting trailing NUL)
                 int wlen = MultiByteToWideChar(CP_UTF8, 0, url, -1, NULL, 0);
-                BSTR bstrUrl = SysAllocStringLen(NULL, wlen);
-                MultiByteToWideChar(CP_UTF8, 0, url, -1, bstrUrl, wlen);
+                BSTR bstrUrl = SysAllocStringLen(NULL, wlen > 1 ? (UINT)(wlen - 1) : 0);
+                if (bstrUrl && wlen > 0) MultiByteToWideChar(CP_UTF8, 0, url, -1, bstrUrl, wlen);
 
                 BSTR bstrPath = SysAllocString(L"");
                 if (path && strlen(path) > 0) {
                     int plen = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
-                    SysReAllocStringLen(&bstrPath, NULL, plen);
-                    MultiByteToWideChar(CP_UTF8, 0, path, -1, bstrPath, plen);
+                    if (plen > 1 && SysReAllocStringLen(&bstrPath, NULL, (UINT)(plen - 1))) {
+                        MultiByteToWideChar(CP_UTF8, 0, path, -1, bstrPath, plen);
+                    }
                 }
 
                 BSTR bstrFile = SysAllocString(L"");
                 if (filename && strlen(filename) > 0) {
                     int flen = MultiByteToWideChar(CP_UTF8, 0, filename, -1, NULL, 0);
-                    SysReAllocStringLen(&bstrFile, NULL, flen);
-                    MultiByteToWideChar(CP_UTF8, 0, filename, -1, bstrFile, flen);
+                    if (flen > 1 && SysReAllocStringLen(&bstrFile, NULL, (UINT)(flen - 1))) {
+                        MultiByteToWideChar(CP_UTF8, 0, filename, -1, bstrFile, flen);
+                    }
                 }
 
                 BSTR bstrEmpty = SysAllocString(L"");
@@ -134,6 +188,7 @@ BOOL KrolixClient_Download(const char* url, const char* path, const char* filena
 
                 hr = pDisp->lpVtbl->Invoke(pDisp, dispid, &IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD, &dp, &vResult, NULL, NULL);
 
+                VariantClear(&vResult);
                 SysFreeString(bstrUrl);
                 SysFreeString(bstrPath);
                 SysFreeString(bstrFile);
@@ -154,20 +209,32 @@ BOOL KrolixClient_Download(const char* url, const char* path, const char* filena
         if (hConnect) {
             HINTERNET hReq = HttpOpenRequestA(hConnect, "POST", "/download", NULL, NULL, NULL, INTERNET_FLAG_NO_CACHE_WRITE, 0);
             if (hReq) {
-                char payload[2048];
+                char escUrl[1024], escPath[512], escFile[512];
+                Krolix_JsonEscape(url, escUrl, sizeof(escUrl));
+                Krolix_JsonEscape(path ? path : "", escPath, sizeof(escPath));
+                Krolix_JsonEscape(filename ? filename : "", escFile, sizeof(escFile));
+
+                char payload[2560];
                 snprintf(payload, sizeof(payload),
                     "{\"url\":\"%s\",\"save_dir\":\"%s\",\"filename\":\"%s\",\"silent\":%s,\"queue_only\":%s}",
-                    url, path ? path : "", filename ? filename : "",
+                    escUrl, escPath, escFile,
                     (flags & KROLIX_FLAG_SILENT) ? "true" : "false",
                     (flags & KROLIX_FLAG_QUEUE_ONLY) ? "true" : "false"
                 );
 
                 const char* headers = "Content-Type: application/json; charset=utf-8\r\nX-Krolix-Client: c-header\r\n";
-                BOOL bSent = HttpSendRequestA(hReq, headers, (DWORD)strlen(headers), payload, (DWORD)strlen(payload));
+                BOOL bOk = FALSE;
+                if (HttpSendRequestA(hReq, headers, (DWORD)strlen(headers), payload, (DWORD)strlen(payload))) {
+                    DWORD statusCode = 0;
+                    DWORD len = sizeof(statusCode);
+                    if (HttpQueryInfoA(hReq, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &statusCode, &len, NULL)) {
+                        if (statusCode >= 200 && statusCode < 300) bOk = TRUE;
+                    }
+                }
                 InternetCloseHandle(hReq);
                 InternetCloseHandle(hConnect);
                 InternetCloseHandle(hOpen);
-                if (bSent) return TRUE;
+                if (bOk) return TRUE;
             } else {
                 InternetCloseHandle(hConnect);
             }

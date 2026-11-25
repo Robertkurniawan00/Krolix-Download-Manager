@@ -2,16 +2,21 @@ import sys
 import os
 import traceback
 
-if sys.stdout is None:
-    try:
-        sys.stdout = open(os.devnull, "w", encoding="utf-8")
-    except Exception:
-        pass
-if sys.stderr is None:
-    try:
-        sys.stderr = open(os.devnull, "w", encoding="utf-8")
-    except Exception:
-        pass
+_is_native_msg = len(sys.argv) > 1 and (
+    sys.argv[1].startswith("chrome-extension://") or "--native-messaging" in sys.argv[1:]
+)
+
+if not _is_native_msg:
+    if sys.stdout is None:
+        try:
+            sys.stdout = open(os.devnull, "w", encoding="utf-8")
+        except Exception:
+            pass
+    if sys.stderr is None:
+        try:
+            sys.stderr = open(os.devnull, "w", encoding="utf-8")
+        except Exception:
+            pass
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -165,13 +170,13 @@ def parse_standard_cli(argv):
 
 def main():
     # 1. Native Messaging stdio handler (invoked by Chrome / Edge)
-    if len(sys.argv) > 1 and (sys.argv[1].startswith("chrome-extension://") or sys.argv[1] == "--native-messaging"):
+    if len(sys.argv) > 1 and (sys.argv[1].startswith("chrome-extension://") or "--native-messaging" in sys.argv[1:]):
         from app.utils.browser_integration import handle_native_messaging
         handle_native_messaging()
         return
 
     # Check for background worker flag
-    is_background = any(arg in sys.argv for arg in ("--background", "--silent", "--worker", "-b"))
+    is_background = any(arg in sys.argv for arg in ("--background", "--silent", "--worker", "--tray", "-b"))
 
     # 2. Acquire Windows Kernel Single-Instance Mutex
     global _GLOBAL_INSTANCE_MUTEX
@@ -188,15 +193,16 @@ def main():
             pass
 
     # If background worker requested and already running without new download: quiet exit
-    if already_running and is_background and not any(arg.startswith("krolix-dl://") or arg.startswith("zero-dl://") or arg.startswith("zero://") or arg == "/d" for arg in sys.argv):
+    _proto_prefixes = ("krolix-dl://", "krolix://", "zero-dl://", "zero://")
+    if already_running and is_background and not any(arg.startswith(_proto_prefixes) or arg == "/d" for arg in sys.argv):
         sys.exit(0)
 
-    # 3. Check for standard CLI or URL protocol invocation: zero-dl://... or /d URL /p path /f name /n /a
+    # 3. Check for standard CLI or URL protocol invocation: krolix-dl://... or /d URL /p path /f name /n /a
     initial_download_payload = None
     cli_payload = parse_standard_cli(sys.argv)
     if cli_payload:
         initial_download_payload = cli_payload
-    elif len(sys.argv) > 1 and (sys.argv[1].startswith("krolix-dl://") or sys.argv[1].startswith("zero-dl://") or sys.argv[1].startswith("zero://")):
+    elif len(sys.argv) > 1 and sys.argv[1].startswith(_proto_prefixes):
         from app.utils.browser_integration import decode_protocol_url
         initial_download_payload = decode_protocol_url(sys.argv[1])
 
@@ -268,16 +274,8 @@ def main():
                                 user32.SetForegroundWindow(target_hwnd)
                                 restored = True
                             else:
-                                # Target window was not found on this desktop station
-                                restored = False
-                                # If the reported PID is a ghost without a desktop window, terminate it to free port 9666
-                                zombie_pid = body.get("pid")
-                                if zombie_pid and zombie_pid != os.getpid():
-                                    try:
-                                        import signal
-                                        os.kill(zombie_pid, signal.SIGTERM)
-                                    except Exception:
-                                        pass
+                                # /restore answered HTTP 200 OK; the Qt UI restores asynchronously (e.g. from tray)
+                                restored = bool(body.get("success", True))
                         except Exception:
                             restored = False
                     else:
@@ -314,14 +312,23 @@ def main():
     if app_icon and not app_icon.isNull():
         app.setWindowIcon(app_icon)
 
-    # Ensure browser integrations (URL protocol & Native Messaging host) are registered
+    db = Database()
+
+    # Ensure browser integrations (URL protocol & Native Messaging host) are registered,
+    # respecting the user's persisted autostart preference
     try:
-        from app.utils.browser_integration import setup_all_browser_integrations
-        setup_all_browser_integrations()
+        from app.utils.browser_integration import (
+            register_url_protocol,
+            register_native_messaging_host,
+            set_windows_autostart,
+        )
+        register_url_protocol()
+        register_native_messaging_host()
+        autostart_pref = db.get_setting("autostart_worker", "true") == "true"
+        set_windows_autostart(autostart_pref)
     except Exception as e:
         print(f"[!] Browser integration setup warning: {e}")
 
-    db = Database()
     from app.ui.styles import get_app_stylesheet
     theme_id = db.get_setting("ui_theme", db.get_setting("theme", "oled_black"))
     accent_id = db.get_setting("ui_accent", "krolix_green")

@@ -24,6 +24,36 @@ class Win32Native:
             try:
                 cls._kernel32 = ctypes.windll.kernel32
                 cls._user32 = ctypes.windll.user32
+
+                cls._kernel32.SetThreadExecutionState.argtypes = [wintypes.DWORD]
+                cls._kernel32.SetThreadExecutionState.restype = wintypes.DWORD
+                cls._kernel32.GetCurrentThreadId.argtypes = []
+                cls._kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+                cls._kernel32.SetFilePointerEx.argtypes = [wintypes.HANDLE, ctypes.c_int64, ctypes.POINTER(ctypes.c_int64), wintypes.DWORD]
+                cls._kernel32.SetFilePointerEx.restype = wintypes.BOOL
+                cls._kernel32.SetEndOfFile.argtypes = [wintypes.HANDLE]
+                cls._kernel32.SetEndOfFile.restype = wintypes.BOOL
+                cls._kernel32.FlushFileBuffers.argtypes = [wintypes.HANDLE]
+                cls._kernel32.FlushFileBuffers.restype = wintypes.BOOL
+
+                cls._user32.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+                cls._user32.AllowSetForegroundWindow.restype = wintypes.BOOL
+                cls._user32.MessageBeep.argtypes = [wintypes.UINT]
+                cls._user32.MessageBeep.restype = wintypes.BOOL
+                cls._user32.GetForegroundWindow.argtypes = []
+                cls._user32.GetForegroundWindow.restype = wintypes.HWND
+                cls._user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+                cls._user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+                cls._user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+                cls._user32.AttachThreadInput.restype = wintypes.BOOL
+                cls._user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+                cls._user32.ShowWindow.restype = wintypes.BOOL
+                cls._user32.BringWindowToTop.argtypes = [wintypes.HWND]
+                cls._user32.BringWindowToTop.restype = wintypes.BOOL
+                cls._user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+                cls._user32.SetForegroundWindow.restype = wintypes.BOOL
+                cls._user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+                cls._user32.SetWindowPos.restype = wintypes.BOOL
             except Exception:
                 pass
 
@@ -120,11 +150,13 @@ class Win32Native:
                 cur_tid = kernel32.GetCurrentThreadId() if kernel32 else 0
                 if fore_tid and cur_tid and fore_tid != cur_tid:
                     user32.AttachThreadInput(cur_tid, fore_tid, True)
-                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-                    user32.ShowWindow(hwnd, 5)  # SW_SHOW
-                    user32.BringWindowToTop(hwnd)
-                    user32.SetForegroundWindow(hwnd)
-                    user32.AttachThreadInput(cur_tid, fore_tid, False)
+                    try:
+                        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                        user32.ShowWindow(hwnd, 5)  # SW_SHOW
+                        user32.BringWindowToTop(hwnd)
+                        user32.SetForegroundWindow(hwnd)
+                    finally:
+                        user32.AttachThreadInput(cur_tid, fore_tid, False)
                 else:
                     user32.ShowWindow(hwnd, 9)
                     user32.ShowWindow(hwnd, 5)
@@ -136,8 +168,8 @@ class Win32Native:
                 user32.SetForegroundWindow(hwnd)
 
             # Extra guarantee: HWND_TOPMOST toggle ensures it sits on top of Chrome
-            HWND_TOPMOST = -1
-            HWND_NOTOPMOST = -2
+            HWND_TOPMOST = wintypes.HWND(-1)
+            HWND_NOTOPMOST = wintypes.HWND(-2)
             SWP_NOMOVE = 0x0002
             SWP_NOSIZE = 0x0001
             SWP_SHOWWINDOW = 0x0040
@@ -162,13 +194,10 @@ class Win32Native:
             if sys.platform == 'win32' and cls._kernel32:
                 import msvcrt
                 with open(filepath, 'a+b') as f:
+                    f.seek(0, os.SEEK_END)
+                    if f.tell() >= size_bytes:
+                        return True
                     handle = msvcrt.get_osfhandle(f.fileno())
-                    cls._kernel32.SetFilePointerEx.argtypes = [wintypes.HANDLE, ctypes.c_int64, ctypes.POINTER(ctypes.c_int64), wintypes.DWORD]
-                    cls._kernel32.SetFilePointerEx.restype = wintypes.BOOL
-                    cls._kernel32.SetEndOfFile.argtypes = [wintypes.HANDLE]
-                    cls._kernel32.SetEndOfFile.restype = wintypes.BOOL
-                    cls._kernel32.FlushFileBuffers.argtypes = [wintypes.HANDLE]
-                    cls._kernel32.FlushFileBuffers.restype = wintypes.BOOL
 
                     # FILE_BEGIN = 0: Move pointer to requested size and fix EOF boundary
                     ok_seek = cls._kernel32.SetFilePointerEx(handle, size_bytes, None, 0)
@@ -177,6 +206,9 @@ class Win32Native:
                     return bool(ok_seek and ok_eof)
             else:
                 with open(filepath, 'a+b') as f:
+                    f.seek(0, os.SEEK_END)
+                    if f.tell() >= size_bytes:
+                        return True
                     f.truncate(size_bytes)
                 return True
         except Exception as e:

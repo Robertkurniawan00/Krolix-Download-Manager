@@ -5,6 +5,8 @@ Zero Download Assistant - SQLite Persistence Layer
 import os
 import sqlite3
 import json
+import threading
+from contextlib import contextmanager
 from typing import List, Dict, Optional, Any
 from .models import DownloadTask, DownloadStatus, SegmentModel
 
@@ -15,21 +17,33 @@ DEFAULT_DB_PATH = os.path.join(DATA_DIR, "downloads.db")
 
 class Database:
     _instance = None
+    _singleton_lock = threading.Lock()
 
     @classmethod
     def get_instance(cls, db_path: str = None):
-        if cls._instance is None:
-            cls._instance = Database(db_path)
-        return cls._instance
+        with cls._singleton_lock:
+            if cls._instance is None:
+                cls._instance = Database(db_path)
+            return cls._instance
 
     def __init__(self, db_path: str = None):
         self.db_path = db_path or DEFAULT_DB_PATH
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self._lock = threading.RLock()
         self._init_db()
 
+    @contextmanager
     def _get_conn(self):
         conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
-        return conn
+        try:
+            with self._lock:
+                with conn:
+                    yield conn
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def _init_db(self):
         with self._get_conn() as conn:
@@ -441,14 +455,14 @@ class Database:
         with self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, url, filename, status FROM downloads WHERE url = ? AND status NOT IN ('Canceled', 'Error')",
+                "SELECT id, url, filename, save_path, status FROM downloads WHERE url = ? AND status NOT IN ('Canceled', 'Error')",
                 (url,)
             )
             rows = cursor.fetchall()
             results = []
             for r in rows:
-                t = DownloadTask(id=r[0], url=r[1], filename=r[2])
-                t.status = DownloadStatus(r[3]) if r[3] in [s.value for s in DownloadStatus] else DownloadStatus.QUEUED
+                t = DownloadTask(id=r[0], url=r[1], filename=r[2], save_path=r[3] or "")
+                t.status = DownloadStatus(r[4]) if r[4] in [s.value for s in DownloadStatus] else DownloadStatus.QUEUED
                 results.append(t)
             return results
 
@@ -457,16 +471,33 @@ class Database:
         with self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, url, filename, status FROM downloads WHERE filename = ? AND status NOT IN ('Canceled', 'Error')",
+                "SELECT id, url, filename, save_path, status FROM downloads WHERE filename = ? AND status NOT IN ('Canceled', 'Error')",
                 (filename,)
             )
             rows = cursor.fetchall()
             results = []
             for r in rows:
-                t = DownloadTask(id=r[0], url=r[1], filename=r[2])
-                t.status = DownloadStatus(r[3]) if r[3] in [s.value for s in DownloadStatus] else DownloadStatus.QUEUED
+                t = DownloadTask(id=r[0], url=r[1], filename=r[2], save_path=r[3] or "")
+                t.status = DownloadStatus(r[4]) if r[4] in [s.value for s in DownloadStatus] else DownloadStatus.QUEUED
                 results.append(t)
             return results
+
+    def get_task_by_hash(self, file_hash: str) -> Optional[DownloadTask]:
+        """Return a completed task matching the given checksum if recorded."""
+        if not file_hash:
+            return None
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, url, filename, save_path, status FROM downloads WHERE checksum = ? AND status = 'Completed' LIMIT 1",
+                (file_hash,)
+            )
+            r = cursor.fetchone()
+            if not r:
+                return None
+            t = DownloadTask(id=r[0], url=r[1], filename=r[2], save_path=r[3] or "")
+            t.status = DownloadStatus.COMPLETED
+            return t
 
     # --- Proxy Manager ---
     def get_proxies(self) -> List[Dict]:

@@ -21,11 +21,17 @@ class ClipboardMonitor(threading.Thread):
         self._last_clip = ""
 
     def run(self):
+        try:
+            import pyperclip
+            self._last_clip = (pyperclip.paste() or "").strip()
+        except Exception:
+            self._last_clip = ""
+
         while self._running:
             if self.enabled:
                 try:
                     import pyperclip
-                    clip_text = pyperclip.paste().strip()
+                    clip_text = (pyperclip.paste() or "").strip()
                     # Guard against huge buffer strings (e.g. copied log files or database dumps)
                     if clip_text and len(clip_text) <= 4096 and clip_text != self._last_clip:
                         self._last_clip = clip_text
@@ -36,20 +42,30 @@ class ClipboardMonitor(threading.Thread):
             time.sleep(1.0)
 
     def _is_downloadable_url(self, text: str) -> bool:
-        if text.startswith("magnet:"):
-            return self.is_torrent_enabled()
-        if not (text.startswith("http://") or text.startswith("https://")):
+        if "\n" in text or "\r" in text or " " in text:
             return False
-        
-        parsed = urllib.parse.urlparse(text)
+        low = text.lower()
+        if low.startswith("magnet:"):
+            return self.is_torrent_enabled()
+        if not low.startswith(("http://", "https://")):
+            return False
+
+        try:
+            parsed = urllib.parse.urlparse(text)
+        except ValueError:
+            return False
+        if not parsed.netloc:
+            return False
+
         path = parsed.path.lower()
         if any(path.endswith(ext) for ext in DOWNLOAD_EXTS):
             if path.endswith(".torrent") and not self.is_torrent_enabled():
                 return False
             return True
-        
-        # Check download indicators in query or path
-        if any(keyword in text.lower() for keyword in ["download", "/get/", "/file/", "attachment"]):
+
+        # Check explicit forced-download query parameters rather than generic substrings
+        query_low = parsed.query.lower()
+        if any(q in query_low for q in ("response-content-disposition=attachment", "download=1", "download=true", "force_download=1")):
             return True
 
         return False

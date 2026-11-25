@@ -88,7 +88,8 @@ def find_installed_extension_ids() -> List[str]:
                                 extensions = data.get("extensions", {}).get("settings", {})
                                 for ext_id, details in extensions.items():
                                     path = details.get("path", "")
-                                    if "DOWNLOAD MANAGER" in path or "zero" in path.lower() or "extension" in path.lower():
+                                    path_low = path.lower()
+                                    if "download manager" in path_low or "krolix" in path_low or "zero" in path_low or "extension" in path_low:
                                         if len(ext_id) == 32 and ext_id.isalnum():
                                             ids.add(ext_id)
                         except Exception:
@@ -111,8 +112,6 @@ def register_url_protocol(exe_path: Optional[str] = None) -> bool:
     try:
         import winreg
         local_app_dir = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Krolix Download Manager")
-        if not os.path.exists(local_app_dir):
-            local_app_dir = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Krolix Download Manager")
         local_main = os.path.join(local_app_dir, "main.py")
         main_py = local_main if os.path.exists(local_main) else os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main.py"))
         pythonw = get_sac_safe_pythonw()
@@ -134,10 +133,7 @@ def register_url_protocol(exe_path: Optional[str] = None) -> bool:
 
                 with winreg.CreateKey(key, r"shell\open\command") as cmd_key:
                     krolix_exe = os.path.join(local_app_dir, "Krolix.exe")
-                    krolix_exe = os.path.join(local_app_dir, "Krolix.exe")
                     if os.path.exists(krolix_exe):
-                        cmd_val = f'"{krolix_exe}" "%1"'
-                    elif os.path.exists(krolix_exe):
                         cmd_val = f'"{krolix_exe}" "%1"'
                     elif "python" in exe.lower():
                         cmd_val = f'"{pythonw}" "{main_py}" "%1"'
@@ -224,11 +220,15 @@ def set_windows_autostart(enable: bool = True) -> bool:
         app_name = "KrolixDownloadManager"
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
             if enable:
-                pythonw = get_sac_safe_pythonw()
-                local_app_dir = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Krolix Download Manager")
-                local_main = os.path.join(local_app_dir, "main.py")
-                main_py = local_main if os.path.exists(local_main) else os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main.py"))
-                cmd_val = f'"{pythonw}" "{main_py}" --background'
+                exe = get_current_executable()
+                if exe.lower().endswith(".exe") and "python" not in os.path.basename(exe).lower():
+                    cmd_val = f'"{exe}" --background'
+                else:
+                    pythonw = get_sac_safe_pythonw()
+                    local_app_dir = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Krolix Download Manager")
+                    local_main = os.path.join(local_app_dir, "main.py")
+                    main_py = local_main if os.path.exists(local_main) else os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main.py"))
+                    cmd_val = f'"{pythonw}" "{main_py}" --background'
                 winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, cmd_val)
             else:
                 try:
@@ -248,25 +248,44 @@ def setup_all_browser_integrations():
     set_windows_autostart(True)
 
 
+def _decode_b64_json(b64_raw: str) -> Optional[dict]:
+    if not b64_raw:
+        return None
+    # parse_qs converts unescaped '+' in query strings into spaces
+    cleaned = b64_raw.strip().replace(" ", "+")
+    cleaned += "=" * (-len(cleaned) % 4)
+    for decoder in (base64.b64decode, base64.urlsafe_b64decode):
+        try:
+            json_str = decoder(cleaned).decode("utf-8", errors="ignore")
+            data = json.loads(json_str)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            continue
+    return None
+
+
 def decode_protocol_url(raw_arg: str) -> Optional[dict]:
     """
-    Decodes zero-dl://download?data=<base64_json> or zero-dl://<url> argument into task payload.
+    Decodes krolix-dl://download?data=<base64_json> (or zero-dl://) argument into task payload.
     """
-    if not raw_arg or not (raw_arg.startswith("zero-dl://") or raw_arg.startswith("zero://")):
+    if not raw_arg:
+        return None
+    supported_schemes = ("krolix-dl://", "krolix://", "zero-dl://", "zero://")
+    scheme = next((s for s in supported_schemes if raw_arg.startswith(s)), None)
+    if not scheme:
         return None
 
     try:
-        scheme = "zero-dl://" if raw_arg.startswith("zero-dl://") else "zero://"
         remainder = raw_arg[len(scheme):]
 
         if "?" in remainder:
             parsed = urllib.parse.urlsplit(raw_arg)
             params = urllib.parse.parse_qs(parsed.query)
             if "data" in params and params["data"]:
-                b64_data = params["data"][0]
-                b64_data += "=" * (-len(b64_data) % 4)
-                json_str = base64.b64decode(b64_data).decode("utf-8", errors="ignore")
-                return json.loads(json_str)
+                decoded = _decode_b64_json(params["data"][0])
+                if decoded is not None:
+                    return decoded
             elif "url" in params and params["url"]:
                 return {
                     "url": params["url"][0],
@@ -274,18 +293,13 @@ def decode_protocol_url(raw_arg: str) -> Optional[dict]:
                     "title": params.get("title", [""])[0]
                 }
 
-        if remainder.startswith("http://") or remainder.startswith("https://") or remainder.startswith("ftp://"):
+        if remainder.startswith(("http://", "https://", "ftp://", "magnet:")):
             return {"url": remainder}
 
         cleaned = remainder.strip("/").strip()
-        cleaned += "=" * (-len(cleaned) % 4)
-        try:
-            json_str = base64.b64decode(cleaned).decode("utf-8", errors="ignore")
-            data = json.loads(json_str)
-            if isinstance(data, dict) and "url" in data:
-                return data
-        except Exception:
-            pass
+        decoded = _decode_b64_json(cleaned)
+        if decoded is not None and "url" in decoded:
+            return decoded
 
     except Exception as e:
         print(f"[!] Error decoding protocol URL {raw_arg}: {e}")
@@ -330,7 +344,19 @@ def handle_native_messaging():
         if not raw_len or len(raw_len) < 4:
             sys.exit(0)
         msg_len = struct.unpack("=I", raw_len)[0]
-        msg_bytes = stdin_buf.read(msg_len)
+        if msg_len <= 0 or msg_len > 16 * 1024 * 1024:
+            sys.exit(0)
+        chunks = []
+        remaining = msg_len
+        while remaining > 0:
+            chunk = stdin_buf.read(remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        msg_bytes = b"".join(chunks)
+        if len(msg_bytes) < msg_len:
+            sys.exit(0)
         data = json.loads(msg_bytes.decode("utf-8"))
 
         forwarded = False
@@ -338,7 +364,7 @@ def handle_native_messaging():
             req = urllib.request.Request(
                 "http://127.0.0.1:9666/download",
                 data=json.dumps(data).encode("utf-8"),
-                headers={"Content-Type": "application/json", "X-Zero-Client": "native"},
+                headers={"Content-Type": "application/json", "X-Krolix-Client": "native"},
                 method="POST"
             )
             with urllib.request.urlopen(req, timeout=3.0) as resp:
@@ -367,8 +393,8 @@ def handle_native_messaging():
                     slim_hdrs = dict(slim_data["headers"])
                     slim_hdrs.pop("m3u8_content", None)
                     slim_data["headers"] = slim_hdrs
-                b64_payload = base64.b64encode(json.dumps(slim_data).encode("utf-8")).decode("ascii")
-                proto_arg = f"zero-dl://download?data={b64_payload}"
+                b64_payload = base64.urlsafe_b64encode(json.dumps(slim_data).encode("utf-8")).decode("ascii")
+                proto_arg = f"krolix-dl://download?data={b64_payload}"
 
                 flag = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
 

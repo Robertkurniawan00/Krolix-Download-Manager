@@ -124,6 +124,7 @@ class StreamWatchlistManager:
         self._wake_event = threading.Event()
         self._lock = threading.RLock()
         self._checking_ids: set = set()
+        self._pending_launches: set = set()
         self._cooldown_until: Dict[str, float] = {}
         self._thread: Optional[threading.Thread] = None
 
@@ -226,11 +227,18 @@ class StreamWatchlistManager:
         with self._lock:
             self._cooldown_until.pop(item_id, None)
 
+    def _get_engine_task(self, task_id: str) -> Optional[DownloadTask]:
+        if not task_id:
+            return None
+        eng_lock = getattr(self.engine, "lock", None)
+        if eng_lock:
+            with eng_lock:
+                return self.engine.tasks.get(task_id)
+        return self.engine.tasks.get(task_id)
+
     def _is_task_active(self, task_id: str) -> bool:
         """Check whether the given task ID is currently running or queued in DownloadEngine."""
-        if not task_id:
-            return False
-        task = self.engine.tasks.get(task_id)
+        task = self._get_engine_task(task_id)
         return bool(task and task.status in ACTIVE_TASK_STATES)
 
     def _count_active_recordings(self, items: List[Dict]) -> int:
@@ -243,10 +251,10 @@ class StreamWatchlistManager:
             task_id = it.get("active_task_id", "")
             if not task_id:
                 continue
-            task = self.engine.tasks.get(task_id)
+            task = self._get_engine_task(task_id)
             if not task or task.status not in ACTIVE_TASK_STATES:
                 new_status = "Offline"
-                if task and task.status in (DownloadStatus.PAUSED, DownloadStatus.CANCELLED):
+                if task and task.status in (DownloadStatus.PAUSED, DownloadStatus.CANCELED):
                     # Respect manual user pause/cancel with a 5-minute cooldown before auto-restarting
                     with self._lock:
                         self._cooldown_until[it["id"]] = now + 300.0
@@ -319,7 +327,7 @@ class StreamWatchlistManager:
         if not item:
             return
         task_id = item.get("active_task_id", "")
-        if task_id and task_id in self.engine.tasks:
+        if task_id and self._get_engine_task(task_id):
             self.engine.pause_download(task_id)
         with self._lock:
             self._cooldown_until[item_id] = time.time() + 300.0
@@ -407,12 +415,19 @@ class StreamWatchlistManager:
                     self.on_item_updated(updated)
                 return updated
 
-            # Channel is LIVE! Check whether we should record now
+            # Channel is LIVE! Check whether we should record now (reserve slot atomically)
             should_record = bool(item.get("auto_record") or force_record)
-            all_items = self.db.get_watchlist()
-            if should_record and not force_record:
-                if self._count_active_recordings(all_items) >= self.get_max_concurrent_recordings():
-                    should_record = False
+            reserved_slot = False
+            if should_record:
+                with self._lock:
+                    if not force_record:
+                        all_items = self.db.get_watchlist()
+                        active_count = self._count_active_recordings(all_items) + len(self._pending_launches)
+                        if active_count >= self.get_max_concurrent_recordings():
+                            should_record = False
+                    if should_record:
+                        self._pending_launches.add(item_id)
+                        reserved_slot = True
 
             if not should_record:
                 self.db.update_watchlist_state(
@@ -426,7 +441,12 @@ class StreamWatchlistManager:
                     self.on_item_updated(updated)
                 return updated
 
-            task = self._launch_recording_task(item, probe)
+            try:
+                task = self._launch_recording_task(item, probe)
+            finally:
+                if reserved_slot:
+                    with self._lock:
+                        self._pending_launches.discard(item_id)
             if task:
                 self.db.update_watchlist_state(
                     item_id,

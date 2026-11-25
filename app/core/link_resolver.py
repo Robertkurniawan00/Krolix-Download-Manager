@@ -137,7 +137,7 @@ class CloudLinkResolver:
         for i in range(c - 1, -1, -1):
             key = baseN(i, a) if a <= 62 else str(i)
             val = words[i] if i < len(words) and words[i] else key
-            p = re.sub(r'\b' + re.escape(key) + r'\b', val, p)
+            p = re.sub(r'\b' + re.escape(key) + r'\b', lambda _m, v=val: v, p)
         return p
 
     @staticmethod

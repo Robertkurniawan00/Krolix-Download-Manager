@@ -231,7 +231,7 @@ class MediaGrabber:
         if not m3u8_url:
             try:
                 from .hls_downloader import fetch_url_with_dpi_bypass
-                raw_html = fetch_url_with_dpi_bypass(
+                raw_html, _ = fetch_url_with_dpi_bypass(
                     f"https://chaturbate.com/{username}/",
                     headers={
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -318,7 +318,7 @@ class MediaGrabber:
                     html = resp.read().decode("utf-8", errors="ignore")
             except Exception:
                 from .hls_downloader import fetch_url_with_dpi_bypass
-                raw_html = fetch_url_with_dpi_bypass(
+                raw_html, _ = fetch_url_with_dpi_bypass(
                     f"https://stripchat.com/{username}",
                     headers={
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",

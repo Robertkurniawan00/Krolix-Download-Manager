@@ -7,7 +7,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 
 from ..core.dht_crawler import TorrentSearchEngine
-from ..utils.helpers import apply_windows_dark_titlebar
+from ..utils.helpers import apply_windows_dark_titlebar, format_bytes
 
 
 class DHTSearchWorker(QThread):
@@ -268,10 +268,10 @@ class DHTSearchDialog(QDialog):
         source_filter = self.combo_source.currentText()
         filtered = []
         for it in items:
-            src = it.get('source', '')
-            if source_filter == "BTDIG Only" and src != "BTDIG":
+            src = (it.get('source', '') or '').lower()
+            if source_filter == "BTDIG Only" and src != "btdig":
                 continue
-            if source_filter == "DHT Only" and src != "DHT":
+            if source_filter == "DHT Only" and src != "dht":
                 continue
             filtered.append(it)
 
@@ -283,16 +283,18 @@ class DHTSearchDialog(QDialog):
             self.table.setItem(row, 0, n_item)
 
             # Ukuran
-            s_item = QTableWidgetItem(item.get("size_formatted", "--"))
+            size_txt = item.get("size_str") or item.get("size_formatted") or "--"
+            s_item = QTableWidgetItem(size_txt)
             self.table.setItem(row, 1, s_item)
 
             # Seeds
-            sd_item = QTableWidgetItem(f"▲ {item.get('seeds', 0):,}")
+            seeds_cnt = int(item.get("seeders", item.get("seeds", 0)) or 0)
+            sd_item = QTableWidgetItem(f"▲ {seeds_cnt:,}")
             sd_item.setForeground(QColor("#86efac"))
             self.table.setItem(row, 2, sd_item)
 
             # Sumber
-            src_item = QTableWidgetItem(item.get("source", "DHT"))
+            src_item = QTableWidgetItem((item.get("source") or "DHT").upper())
             self.table.setItem(row, 3, src_item)
             
             # Hash
@@ -318,7 +320,8 @@ class DHTSearchDialog(QDialog):
             files = self._current_selected.get('files', [])
             if files:
                 for f in files:
-                    self.file_list.addItem(f"{f.get('name')} ({f.get('size_formatted', '')})")
+                    sz_str = f.get('size_formatted') or (format_bytes(f['size']) if isinstance(f.get('size'), (int, float)) and f['size'] > 0 else '')
+                    self.file_list.addItem(f"{f.get('name')} ({sz_str})" if sz_str else f"{f.get('name')}")
                 self.btn_resolve.setEnabled(False)
             else:
                 self.file_list.addItem("Metadata belum tersedia. Klik Resolve Metadata.")
@@ -346,7 +349,8 @@ class DHTSearchDialog(QDialog):
         files = meta.get('files', [])
         if files:
             for f in files:
-                self.file_list.addItem(f"{f.get('name')} ({f.get('size_formatted', '')})")
+                sz_str = f.get('size_formatted') or (format_bytes(f['size']) if isinstance(f.get('size'), (int, float)) and f['size'] > 0 else '')
+                self.file_list.addItem(f"{f.get('name')} ({sz_str})" if sz_str else f"{f.get('name')}")
         else:
             self.file_list.addItem("Tidak ada file ditemukan dalam metadata.")
             
@@ -377,8 +381,21 @@ class DHTSearchDialog(QDialog):
             self.lbl_status.setText("Magnet tersalin ke clipboard.")
 
     def _on_select_file_clicked(self):
-        # Placeholder for TorrentFileSelectorDialog idea
-        QMessageBox.information(self, "Pilih File", "Fitur pilih file akan diimplementasikan pada TorrentFileSelectorDialog.")
+        magnet = self._get_magnet()
+        if not magnet:
+            QMessageBox.warning(self, "Peringatan", "Pilih torrent terlebih dahulu.")
+            return
+        from .torrent_file_selector import TorrentFileSelectorDialog
+        dlg = TorrentFileSelectorDialog(magnet, parent=self)
+        if dlg.exec():
+            QMessageBox.information(self, "File Dipilih", f"{len(dlg.get_selected_indices())} file dipilih. Klik Download untuk memulai.")
+
+    def closeEvent(self, event):
+        for w in (self._search_worker, self._resolve_worker):
+            if w and w.isRunning():
+                w.quit()
+                w.wait(1500)
+        super().closeEvent(event)
 
     def _on_download_clicked(self):
         magnet = self._get_magnet()

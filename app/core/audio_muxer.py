@@ -26,6 +26,8 @@ class AudioMuxer:
             os.path.join(os.path.dirname(sys.executable), "app", "assets", "bin", "ffmpeg.exe"),
             os.path.join(os.path.dirname(__file__), "..", "assets", "bin", "ffmpeg.exe"),
             os.path.join(os.path.dirname(__file__), "..", "..", "bin", "ffmpeg.exe"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Krolix Download Manager\ffmpeg.exe"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Krolix Download Manager\app\assets\bin\ffmpeg.exe"),
             os.path.expandvars(r"%LOCALAPPDATA%\Programs\Zero Download Assistant\ffmpeg.exe"),
             os.path.expandvars(r"%LOCALAPPDATA%\Programs\Zero Download Assistant\app\assets\bin\ffmpeg.exe"),
             os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Links\ffmpeg.exe"),
@@ -118,13 +120,10 @@ class AudioMuxer:
         try:
             res = subprocess.run(cmd, **kwargs)
             if res.returncode == 0 and os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
-                # Safely replace original video file with the muxed version
+                # Atomically replace original video file with the muxed version
                 try:
-                    if os.path.exists(video_path):
-                        os.remove(video_path)
                     os.replace(temp_output, video_path)
                 except Exception:
-                    # Fallback rename
                     shutil.move(temp_output, video_path)
 
                 # Clean up companion audio file
@@ -143,11 +142,12 @@ class AudioMuxer:
                     on_error(err_msg)
                 return False
         except Exception as e:
+            if on_error:
+                on_error(str(e))
+            return False
+        finally:
             if os.path.exists(temp_output):
                 try:
                     os.remove(temp_output)
                 except Exception:
                     pass
-            if on_error:
-                on_error(str(e))
-            return False

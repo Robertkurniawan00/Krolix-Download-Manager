@@ -60,6 +60,7 @@ class TrackerManager:
         self._trackers: List[str] = list(DEFAULT_TIER1_TRACKERS)
         self._last_updated: float = 0.0
         self._is_updating = False
+        self._state_lock = threading.RLock()
 
         self._load_cache()
         # Auto refresh if cache is expired
@@ -110,11 +111,12 @@ class TrackerManager:
 
     def update_trackers_async(self, force: bool = False, on_completed: Optional[Callable[[bool, int, str], None]] = None):
         """Asynchronously updates public tracker list in a background thread."""
-        if self._is_updating:
-            return
+        with self._state_lock:
+            if self._is_updating:
+                return
+            self._is_updating = True
 
         def _worker():
-            self._is_updating = True
             success = False
             new_trackers = set(DEFAULT_TIER1_TRACKERS)
             msg = ""
@@ -124,7 +126,7 @@ class TrackerManager:
             ctx.verify_mode = ssl.CERT_NONE
 
             headers = {
-                "User-Agent": "ZeroDownloadAssistant/2.8 TrackerUpdater (+https://github.com/)"
+                "User-Agent": "KrolixDownloadManager/2.8 TrackerUpdater (+https://github.com/)"
             }
 
             for url in UPSTREAM_TRACKER_SOURCES:
@@ -146,28 +148,30 @@ class TrackerManager:
                     msg = str(e)
                     continue
 
-            if success and new_trackers:
-                # Deduplicate while keeping high-tier first
-                ordered = []
-                for t in DEFAULT_TIER1_TRACKERS:
-                    if t in new_trackers and t not in ordered:
-                        ordered.append(t)
-                for t in sorted(new_trackers):
-                    if t not in ordered:
-                        ordered.append(t)
+            with self._state_lock:
+                if success and new_trackers:
+                    ordered = []
+                    for t in DEFAULT_TIER1_TRACKERS:
+                        if t in new_trackers and t not in ordered:
+                            ordered.append(t)
+                    for t in sorted(new_trackers):
+                        if t not in ordered:
+                            ordered.append(t)
 
-                self._trackers = ordered
-                self._last_updated = time.time()
-                self._save_cache()
-                msg = f"Berhasil memperbarui {len(self._trackers)} tracker publik."
-            else:
-                msg = f"Gagal memperbarui dari remote. Menggunakan {len(self._trackers)} tracker bawaan."
+                    self._trackers = ordered
+                    self._last_updated = time.time()
+                    self._save_cache()
+                    msg = f"Berhasil memperbarui {len(self._trackers)} tracker publik."
+                else:
+                    msg = f"Gagal memperbarui dari remote. Menggunakan {len(self._trackers)} tracker bawaan."
 
-            self._is_updating = False
+                count = len(self._trackers)
+                self._is_updating = False
+
             if on_completed:
                 try:
-                    on_completed(success, len(self._trackers), msg)
+                    on_completed(success, count, msg)
                 except Exception:
                     pass
 
-        threading.Thread(target=_worker, daemon=True, name="ZeroTrackerUpdater").start()
+        threading.Thread(target=_worker, daemon=True, name="KrolixTrackerUpdater").start()

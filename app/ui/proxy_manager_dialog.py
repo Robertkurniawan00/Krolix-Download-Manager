@@ -413,3 +413,9 @@ class ProxyManagerDialog(QDialog):
         proxy = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
         self.proxy_selected.emit(proxy)
         self.accept()
+
+    def closeEvent(self, event):
+        if hasattr(self, "_test_worker") and self._test_worker and self._test_worker.isRunning():
+            self._test_worker.quit()
+            self._test_worker.wait(1500)
+        super().closeEvent(event)

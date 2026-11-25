@@ -624,3 +624,9 @@ class TorrentAddDialog(QDialog):
             self.accept()
         except Exception as e:
             QMessageBox.critical(self, "Gagal Menambahkan Unduhan", f"Terjadi kesalahan:\n{e}")
+
+    def closeEvent(self, event):
+        if hasattr(self, "_meta_worker") and self._meta_worker and self._meta_worker.isRunning():
+            self._meta_worker.quit()
+            self._meta_worker.wait(1500)
+        super().closeEvent(event)

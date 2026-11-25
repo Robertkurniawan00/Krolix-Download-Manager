@@ -155,15 +155,23 @@ class KrolixClient {
                 let body = '';
                 res.on('data', chunk => body += chunk);
                 res.on('end', () => {
-                    try {
-                        resolve({ success: true, response: JSON.parse(body) });
-                    } catch {
-                        resolve({ success: true, raw: body });
+                    if (res.statusCode >= 200 && res.statusCode < 300) {
+                        try {
+                            resolve({ success: true, response: JSON.parse(body) });
+                        } catch {
+                            resolve({ success: true, raw: body });
+                        }
+                    } else {
+                        reject(new Error(`HTTP ${res.statusCode}: ${body}`));
                     }
                 });
             });
 
             req.on('error', err => reject(err));
+            req.on('timeout', () => {
+                req.destroy();
+                reject(new Error('Batch download request timed out'));
+            });
             req.write(postBody);
             req.end();
         });
@@ -221,10 +229,24 @@ if (require.main === module) {
     if (args.includes('--status')) {
         client.getStatus().then(status => {
             console.log('Krolix Status:', JSON.stringify(status, null, 2));
-            process.exit(0);
+            process.exit(status && status.online ? 0 : 1);
         });
     } else {
-        const url = args[0];
+        let url = '';
+        for (let i = 0; i < args.length; i++) {
+            const a = args[i];
+            if (a === '--dir' || a === '-p' || a === '--filename' || a === '-f') {
+                i++; // skip option value
+                continue;
+            }
+            if (a.startsWith('-')) continue;
+            url = a;
+            break;
+        }
+        if (!url) {
+            console.error('[Krolix Node.js Error] Missing download URL.');
+            process.exit(1);
+        }
         const options = {
             silent: args.includes('--silent') || args.includes('-n'),
             queueOnly: args.includes('--queue') || args.includes('-a')

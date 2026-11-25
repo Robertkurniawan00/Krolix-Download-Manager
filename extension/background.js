@@ -29,9 +29,20 @@ function setupContextMenus() {
   }
 }
 
+let captureHlsEnabled = true;
+try {
+  chrome.storage?.local?.get({ captureHls: true }, (res) => {
+    captureHlsEnabled = res?.captureHls !== false;
+  });
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area === "local" && changes.captureHls) {
+      captureHlsEnabled = changes.captureHls.newValue !== false;
+    }
+  });
+} catch (e) {}
+
 chrome.runtime.onInstalled.addListener(setupContextMenus);
 chrome.runtime.onStartup.addListener(setupContextMenus);
-setupContextMenus();
 
 function sendBatchToZero(payload) {
   fetch(ZERO_BATCH_API, {
@@ -527,6 +538,9 @@ const capturedM3u8Content = new Map();
 
 async function recordStream(tabId, mediaPayload) {
   if (tabId < 0 || !mediaPayload || !mediaPayload.url) return;
+  if (!captureHlsEnabled && (mediaPayload.is_hls || mediaPayload.is_dash)) {
+    return;
+  }
   if (isAdOrJunkMedia(mediaPayload.url, mediaPayload.name, mediaPayload)) {
     return; // Block advertising and blurred preview media streams
   }
@@ -692,7 +706,8 @@ try {
           const cleanUrl = details.url.split("?")[0].split("#")[0];
           const parts = cleanUrl.split("/");
           const rawName = parts[parts.length - 1] || (isHls ? "stream.m3u8" : "stream.mpd");
-          let name = decodeURIComponent(rawName);
+          let name = rawName;
+          try { name = decodeURIComponent(rawName); } catch (e) {}
           recordStream(details.tabId, {
             url: details.url,
             name: name,
@@ -827,7 +842,8 @@ try {
           const cleanUrl = details.url.split("?")[0].split("#")[0];
           const parts = cleanUrl.split("/");
           const rawName = parts[parts.length - 1] || ("video." + ext);
-          let name = decodeURIComponent(rawName);
+          let name = rawName;
+          try { name = decodeURIComponent(rawName); } catch (e) {}
           if (isAdOrJunkMedia(details.url, name, { initiator: details.initiator || "" })) {
             return;
           }
@@ -987,6 +1003,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ success: false, error: err.message });
       }
     })();
+    return true;
+  } else if (message && message.action === "BATCH_DOWNLOAD_STREAMS") {
+    const items = Array.isArray(message.items) ? message.items : [];
+    if (items.length > 0) {
+      sendBatchToZero({
+        referer: message.referer || (sender.tab ? sender.tab.url : ""),
+        user_agent: navigator.userAgent,
+        items
+      });
+    }
+    sendResponse({ success: items.length > 0, count: items.length });
     return true;
   } else if (message && message.action === "OPEN_OPTIONS") {
     try {
@@ -1160,35 +1187,44 @@ async function sendToZero(options) {
     // Step 2: Desktop app is closed -> Sequential Auto-Launch using slimPayload!
     let launched = false;
 
-    // A. Native Messaging Host (preferred, direct IPC without opening tabs/iframes)
+    // A. Native Messaging Host (try com.krolix.downloader, fallback to com.zero.downloader)
     if (chrome.runtime?.sendNativeMessage) {
-      try {
-        launched = await new Promise((resolve) => {
-          chrome.runtime.sendNativeMessage("com.zero.downloader", slimPayload, (res) => {
+      const sendNative = (hostName) => new Promise((resolve) => {
+        try {
+          chrome.runtime.sendNativeMessage(hostName, slimPayload, (res) => {
             if (chrome.runtime.lastError) {
               resolve(false);
             } else if (res && res.status === "ok") {
               console.log("[Krolix] Native messaging successfully dispatched download:", res);
               if (res.license) {
-                chrome.storage.local.set({ zeroLicense: res.license });
+                chrome.storage.local.set({ krolixLicense: res.license, zeroLicense: res.license });
               }
               resolve(true);
             } else {
               resolve(false);
             }
           });
-        });
-      } catch (nmErr) {
-        console.log("[Krolix] Native messaging notice:", nmErr);
+        } catch (e) {
+          resolve(false);
+        }
+      });
+      launched = await sendNative("com.krolix.downloader");
+      if (!launched) {
+        launched = await sendNative("com.zero.downloader");
       }
     }
 
-    // B. Custom Protocol URL (zero-dl://) ONLY if Native Messaging was not successful
+    // B. Custom Protocol URL (krolix-dl://) ONLY if Native Messaging was not successful
     if (!launched) {
       try {
         const jsonStr = JSON.stringify(slimPayload);
-        const b64 = btoa(unescape(encodeURIComponent(jsonStr)));
-        const protocolUrl = `zero-dl://download?data=${b64}`;
+        const bytes = new TextEncoder().encode(jsonStr);
+        let binStr = "";
+        for (let i = 0; i < bytes.length; i++) {
+          binStr += String.fromCharCode(bytes[i]);
+        }
+        const b64 = btoa(binStr).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        const protocolUrl = `krolix-dl://download?data=${b64}`;
 
         const tabs = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
         let launchedViaTab = false;

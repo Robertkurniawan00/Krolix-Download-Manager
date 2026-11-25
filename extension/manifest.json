@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Krolix Download Manager Integration",
-  "version": "2.8.4",
+  "version": "2.8.5",
   "description": "Seamlessly intercepts browser downloads and sends them directly to Krolix Download Manager.",
   "permissions": [
     "downloads",

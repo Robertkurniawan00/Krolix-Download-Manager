@@ -462,6 +462,12 @@ class LicenseManager:
                 data_to_verify = payload + b"::" + full_name.encode("utf-8") + b"::" + email_clean.encode("utf-8")
                 try:
                     self._pub_key_obj.verify(signature, data_to_verify)
+                    if expiry_ts > 0 and time.time() > expiry_ts:
+                        return (
+                            False,
+                            "EXPIRED_KEY",
+                            "Sertifikat lisensi Ed25519 ini telah melewati tanggal kedaluwarsa."
+                        )
                     if hwid_mode == 1:
                         if hwid_hash_bytes != SecurityGuard.get_hardware_hash_crc32().to_bytes(4, "big"):
                             return (
@@ -470,6 +476,8 @@ class LicenseManager:
                                 f"Serial key ini terkunci pada perangkat keras (HWID) lain.\n"
                                 f"Hardware ID komputer ini: {SecurityGuard.get_hardware_id()}"
                             )
+                    if tier == 2:
+                        return True, "VALID_MASTER", "Kunci lisensi sertifikat Ed25519 Advance Master Mode sah terverifikasi."
                     return True, "VALID_PRO", "Kunci lisensi sertifikat Ed25519 sah terverifikasi."
                 except InvalidSignature:
                     return (

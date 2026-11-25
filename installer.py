@@ -125,13 +125,17 @@ class InstallWorker(QThread):
             # Source payload directory inside PyInstaller bundle or local folder
             base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
             candidate_sources = [
+                os.path.join(base_dir, "payload", "Krolix"),
                 os.path.join(base_dir, "payload"),
                 os.path.join(base_dir, "payload", "Zero"),
                 os.path.join(base_dir, "payload", "Vortex"),
+                os.path.join(base_dir, "dist", "Krolix"),
                 os.path.join(base_dir, "dist", "Zero"),
                 os.path.join(base_dir, "dist", "Vortex"),
+                os.path.join(os.path.dirname(base_dir), "dist", "Krolix"),
                 os.path.join(os.path.dirname(base_dir), "dist", "Zero"),
                 os.path.join(os.path.dirname(base_dir), "dist", "Vortex"),
+                os.path.join(base_dir, "Krolix"),
                 os.path.join(base_dir, "Zero"),
                 base_dir
             ]
@@ -228,14 +232,17 @@ class InstallWorker(QThread):
 title Uninstall {app_title}
 echo Menghapus instalasi {app_title}...
 taskkill /f /im Krolix.exe 2>nul
-taskkill /f /im Krolix.exe 2>nul
-taskkill /f /im Vortex.exe 2>nul
+taskkill /f /im KrolixNativeEngine.exe 2>nul
 timeout /t 1 /nobreak >nul
 reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\KrolixDownloadManager" /f 2>nul
 reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "KrolixDownloadManager" /f 2>nul
-reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "Zero" /f 2>nul
-reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Vortex" /f 2>nul
-reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "Vortex" /f 2>nul
+reg delete "HKCU\\Software\\Classes\\krolix-dl" /f 2>nul
+reg delete "HKCU\\Software\\Classes\\krolix" /f 2>nul
+reg delete "HKCU\\Software\\Classes\\zero-dl" /f 2>nul
+reg delete "HKCU\\Software\\Classes\\zero" /f 2>nul
+reg delete "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.krolix.downloader" /f 2>nul
+reg delete "HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.krolix.downloader" /f 2>nul
+reg delete "HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\com.krolix.downloader" /f 2>nul
 echo Menghapus shortcut...
 del /q "%USERPROFILE%\\Desktop\\{app_title}.lnk" 2>nul
 rmdir /s /q "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\{app_title}" 2>nul

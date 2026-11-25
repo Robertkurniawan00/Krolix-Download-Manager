@@ -56,6 +56,16 @@ class WatchlistDialog(QDialog):
         self._ui_timer.timeout.connect(self.refresh_table)
         self._ui_timer.start()
 
+    def showEvent(self, event):
+        if hasattr(self, "_ui_timer") and self._ui_timer and not self._ui_timer.isActive():
+            self._ui_timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        if hasattr(self, "_ui_timer") and self._ui_timer:
+            self._ui_timer.stop()
+        super().hideEvent(event)
+
     def closeEvent(self, event):
         if hasattr(self, "_ui_timer") and self._ui_timer:
             self._ui_timer.stop()

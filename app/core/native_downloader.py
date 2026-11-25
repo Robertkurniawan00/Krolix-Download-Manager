@@ -59,7 +59,9 @@ class NativeDownloadWorker(QObject):
             dest_file = os.path.join(dest_file, self.task.filename)
             self.task.save_path = dest_file
 
-        os.makedirs(os.path.dirname(dest_file), exist_ok=True)
+        parent_dir = os.path.dirname(os.path.abspath(dest_file))
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
 
         cmd = [
             self._zero_core_bin,
@@ -74,7 +76,7 @@ class NativeDownloadWorker(QObject):
         try:
             startupinfo = None
             if sys.platform == 'win32':
-                startupinfo = subprocess.STARTINFO()
+                startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 0  # SW_HIDE
 
@@ -82,7 +84,7 @@ class NativeDownloadWorker(QObject):
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True,
                 bufsize=1,
                 startupinfo=startupinfo

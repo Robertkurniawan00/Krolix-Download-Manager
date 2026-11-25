@@ -52,7 +52,7 @@ class Aria2Worker(QObject):
 
     def cancel(self):
         self._is_cancelled = True
-        self.task.status = 'error'
+        self.task.status = 'canceled'
         self._terminate()
 
     def _terminate(self):
@@ -68,7 +68,7 @@ class Aria2Worker(QObject):
             self.task_failed.emit(self.task.id, "aria2c.exe tidak ditemukan di folder assets/bin")
             return
 
-        dest_dir = self.task.save_path if os.path.isdir(self.task.save_path) else os.path.dirname(self.task.save_path)
+        dest_dir = self.task.save_path if os.path.isdir(self.task.save_path) else os.path.dirname(os.path.abspath(self.task.save_path))
         dest_filename = self.task.filename or os.path.basename(self.task.save_path)
         os.makedirs(dest_dir, exist_ok=True)
 

@@ -147,17 +147,21 @@ class MagnetResolver:
 class TorrentSearchEngine:
     def search(self, query: str, limit: int = 20, timeout_s: float = 10.0) -> List[dict]:
         searcher = BTDIGSearcher()
-        results = []
+        results_holder: List[dict] = []
+        res_lock = threading.Lock()
         
         # Run BTDIGSearcher in a thread with timeout
         def worker():
-            nonlocal results
-            results = searcher.search(query, limit)
+            found = searcher.search(query, limit)
+            with res_lock:
+                results_holder.extend(found or [])
             
-        t = threading.Thread(target=worker)
+        t = threading.Thread(target=worker, daemon=True)
         t.start()
         t.join(timeout=timeout_s)
         
+        with res_lock:
+            results = list(results_holder)
         # Sort by seeders desc
         results.sort(key=lambda x: x.get('seeders', 0), reverse=True)
         return results

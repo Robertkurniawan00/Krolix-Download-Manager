@@ -179,3 +179,11 @@ class HashDialog(QDialog):
             self.match_lbl.setText("CHECKSUM TIDAK COCOK: Kemungkinan berkas rusak atau dimodifikasi.")
             self.match_lbl.setStyleSheet("color: #ef4444; font-weight: bold;")
             self.compare_input.setStyleSheet("border: 1px solid #ef4444;")
+
+    def closeEvent(self, event):
+        if hasattr(self, "worker") and self.worker and self.worker.isRunning():
+            if hasattr(self.worker, "cancel"):
+                self.worker.cancel()
+            self.worker.quit()
+            self.worker.wait(1500)
+        super().closeEvent(event)

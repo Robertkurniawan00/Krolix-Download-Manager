@@ -436,6 +436,7 @@ class GrabberDialog(QDialog):
             start_url=self.txt_url.text().strip(),
             max_depth=self.spn_depth.value(),
             stay_on_domain=self.chk_stay_domain.isChecked(),
+            allow_subdomains=self.chk_allow_subdomains.isChecked(),
             categories=categories,
             custom_extensions=custom_exts,
             max_pages=self.spn_max_pages.value(),
@@ -552,6 +553,11 @@ class GrabberDialog(QDialog):
         if self.crawler:
             self.crawler.stop()
         self.reject()
+
+    def closeEvent(self, event):
+        if self.crawler:
+            self.crawler.stop()
+        super().closeEvent(event)
 
     def get_results(self) -> dict:
         return self.results

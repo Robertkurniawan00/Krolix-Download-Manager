@@ -33,13 +33,15 @@ class SoundManager:
             return cls._instance
 
     def __init__(self, db=None):
-        if self._initialized:
-            if db and not getattr(self, "db", None):
-                self.db = db
-            return
-        self.db = db
-        self.sounds_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "assets", "sounds"))
-        os.makedirs(self.sounds_dir, exist_ok=True)
+        with self._lock:
+            if self._initialized:
+                if db and not getattr(self, "db", None):
+                    self.db = db
+                return
+            self.db = db
+            self.sounds_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "assets", "sounds"))
+            os.makedirs(self.sounds_dir, exist_ok=True)
+            self._initialized = True
 
     def _generate_wav(self, file_path: str, tones: list, duration_sec: float = 0.5):
         """Synthesizes high-fidelity 44.1 kHz 16-bit mono PCM WAV audio with exponential decay envelope."""

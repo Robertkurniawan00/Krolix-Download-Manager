@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QWidget, QCheckBox, QFrame, QMenu
 )
 from PyQt6.QtGui import QIcon, QPixmap
-from PyQt6.QtCore import Qt, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer
 from ..core.downloader import DownloadEngine
 from ..core.link_resolver import CloudLinkResolver
 from ..utils.helpers import format_bytes, sanitize_filename, apply_windows_dark_titlebar, get_category_from_filename
@@ -56,6 +56,13 @@ class AddDownloadDialog(QDialog):
         self.probed_size = initial_filesize
         self.initial_description = initial_description or ""
         self.selected_torrent_files = None
+        self.direct_url = None
+        self._direct_source_url = ""
+        self.torrent_enabled = bool(
+            self.engine.db.is_torrent_enabled()
+            if (self.engine and hasattr(self.engine, "db") and self.engine.db)
+            else False
+        )
         self.current_resolution = initial_resolution or ""
         self.current_bitrate = initial_bitrate or 0
         self.variants = variants or []
@@ -109,6 +116,10 @@ class AddDownloadDialog(QDialog):
         elif os.path.exists(logo_path):
             self.setWindowIcon(QIcon(logo_path))
 
+        self._probe_timer = QTimer(self)
+        self._probe_timer.setSingleShot(True)
+        self._probe_timer.setInterval(350)
+        self._probe_timer.timeout.connect(self._start_probe)
         self.probe_finished_signal.connect(self._on_probe_complete)
         self._init_ui(initial_url)
 
@@ -677,7 +688,10 @@ class AddDownloadDialog(QDialog):
         ):
             self.btn_download_now.setEnabled(True)
             self.btn_download_later.setEnabled(True)
-            self._start_probe()
+            if hasattr(self, "_probe_timer"):
+                self._probe_timer.start()
+            else:
+                self._start_probe()
 
     def _start_probe(self):
         raw_url = self.txt_url.text().strip()
@@ -757,6 +771,7 @@ class AddDownloadDialog(QDialog):
             self.lbl_probe_status.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 600;")
             self.lbl_probe_resume.setText("Resume: <span style='background-color: rgba(16,185,129,0.2); color: #34d399; padding: 2px 6px; border-radius: 3px; font-weight: 600;'>Yes (Direct CDN)</span>")
             if info.get("direct_url"):
+                self._direct_source_url = url
                 self.direct_url = info["direct_url"]
             if info.get("headers"):
                 self.initial_headers.update(info["headers"])
@@ -818,6 +833,11 @@ class AddDownloadDialog(QDialog):
                     self.lbl_probe_size.setText("Size: <b style='color: #cbd5e1;'>Live Stream (MP4 / WebM)</b>")
                 else:
                     self.lbl_probe_size.setText("Size: <b style='color: #cbd5e1;'>Auto Convert to MP4</b>")
+        elif info.get("success") is False or info.get("error"):
+            err_msg = info.get("error") or "Server tidak merespons"
+            self.lbl_probe_status.setText(f"● Probe Failed: {err_msg[:60]}")
+            self.lbl_probe_status.setStyleSheet("color: #f59e0b; font-size: 11px; font-weight: 600;")
+            self.lbl_probe_size.setText(f"Size: <b style='color: #f1f5f9;'>{size_str}</b>")
         else:
             self.lbl_probe_status.setText("● Server Connected")
             self.lbl_probe_status.setStyleSheet("color: #10b981; font-size: 11px; font-weight: 600;")
@@ -892,6 +912,9 @@ class AddDownloadDialog(QDialog):
         tb = v.get("total_bytes", v.get("filesize", -1))
         if tb > 0 and not v.get("is_live"):
             self.initial_filesize = tb
+            self.probed_size = tb
+            if hasattr(self, "lbl_probe_size"):
+                self.lbl_probe_size.setText(f"Size: <b style='color: #f1f5f9;'>~{format_bytes(tb)}</b>")
 
         # Update Filename tag if present
         cur_fn = self.txt_filename.text().strip()
@@ -991,6 +1014,8 @@ class AddDownloadDialog(QDialog):
 
     def _create_task(self, start_now: bool):
         url = self.txt_url.text().strip()
+        if self.direct_url and url == self._direct_source_url:
+            url = self.direct_url
         if not url:
             QMessageBox.warning(self, "Invalid URL", "Please enter a valid download URL.")
             return

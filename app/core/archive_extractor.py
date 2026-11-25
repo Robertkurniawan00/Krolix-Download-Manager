@@ -10,7 +10,7 @@ class ArchiveExtractor:
         if not file_path:
             return False
         lower = str(file_path).lower()
-        return lower.endswith(('.zip', '.tar', '.gz', '.tgz', '.bz2', '.rar', '.7z'))
+        return lower.endswith(('.zip', '.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.tar.xz', '.txz', '.gz', '.bz2', '.rar', '.7z'))
 
     @staticmethod
     def _is_safe_path(base_dir: str, target_path: str) -> bool:
@@ -23,12 +23,18 @@ class ArchiveExtractor:
         if not os.path.exists(file_path):
             return False, f"File not found: {file_path}"
 
+        lower = file_path.lower()
         if not extract_to:
-            base_name = os.path.splitext(file_path)[0]
+            base_name = file_path
+            for compound_ext in ('.tar.gz', '.tar.bz2', '.tar.xz'):
+                if lower.endswith(compound_ext):
+                    base_name = file_path[:-len(compound_ext)]
+                    break
+            else:
+                base_name = os.path.splitext(file_path)[0]
             extract_to = base_name
 
         os.makedirs(extract_to, exist_ok=True)
-        lower = file_path.lower()
 
         try:
             if lower.endswith('.zip'):
@@ -40,7 +46,7 @@ class ArchiveExtractor:
                             raise ValueError(f"Security Alert: Malicious path traversal detected in zip archive: {member}")
                     zip_ref.extractall(extract_to)
                 return True, extract_to
-            elif lower.endswith(('.tar', '.gz', '.tgz', '.bz2')):
+            elif lower.endswith(('.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.tar.xz', '.txz')):
                 with tarfile.open(file_path, 'r:*') as tar_ref:
                     # Guard against Tar Slip
                     for member in tar_ref.getmembers():
@@ -52,12 +58,21 @@ class ArchiveExtractor:
                     else:
                         tar_ref.extractall(extract_to)
                 return True, extract_to
-            elif lower.endswith(('.rar', '.7z')):
+            elif lower.endswith('.gz'):
+                import gzip
+                import shutil
+                out_name = os.path.splitext(os.path.basename(file_path))[0] or "extracted_file"
+                out_path = os.path.join(extract_to, out_name)
+                with gzip.open(file_path, 'rb') as f_in, open(out_path, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+                return True, extract_to
+            elif lower.endswith(('.bz2', '.rar', '.7z')):
                 # Attempt to use WinRAR or 7z if installed on the system
                 winrar_paths = [
+                    r"C:\Program Files\7-Zip\7z.exe",
+                    r"C:\Program Files (x86)\7-Zip\7z.exe",
                     r"C:\Program Files\WinRAR\WinRAR.exe",
                     r"C:\Program Files (x86)\WinRAR\WinRAR.exe",
-                    r"C:\Program Files\7-Zip\7z.exe"
                 ]
                 extractor_exe = next((p for p in winrar_paths if os.path.exists(p)), None)
                 if extractor_exe:
@@ -66,7 +81,7 @@ class ArchiveExtractor:
                     else:
                         cmd = [extractor_exe, "x", "-y", file_path, extract_to]
                     cflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                    subprocess.run(cmd, check=True, creationflags=cflags)
+                    subprocess.run(cmd, check=True, creationflags=cflags, stdin=subprocess.DEVNULL, timeout=300)
                     return True, extract_to
                 return False, "WinRAR or 7-Zip not found to extract this archive."
             return False, "Unsupported archive format"

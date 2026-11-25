@@ -3,7 +3,7 @@ Krolix Download Manager - Local HTTP API Server for Browser Extension Integratio
 Listens on http://127.0.0.1:9666
 """
 
-import os, re, json, threading
+import os, re, json, threading, urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -56,7 +56,10 @@ class ApiHandler(BaseHTTPRequestHandler):
         if not save_dir:
             return True
         try:
-            abs_dir = os.path.abspath(save_dir).lower()
+            norm = save_dir.strip()
+            if norm.startswith("\\\\") or norm.startswith("//"):
+                return False
+            abs_dir = os.path.abspath(norm).lower()
             # Block system directories
             blocked_prefixes = []
             for env_var in ("SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"):
@@ -104,6 +107,22 @@ class ApiHandler(BaseHTTPRequestHandler):
         self._set_headers(200)
         self.wfile.write(b"")
 
+    @staticmethod
+    def _sanitize_filename(raw_name: str, fallback_url: str = "") -> str:
+        clean_base = os.path.basename((raw_name or "").replace("\\", "/"))
+        safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', clean_base).strip('. ')
+        if not safe and fallback_url:
+            if fallback_url.lower().startswith("magnet:"):
+                safe = "magnet_download.torrent"
+            else:
+                url_base = os.path.basename(fallback_url.split('?')[0].split('#')[0])
+                safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', url_base).strip('. ')
+        return safe or "download_file"
+
+    @staticmethod
+    def _is_allowed_url(url: str) -> bool:
+        return url.lower().startswith(('http://', 'https://', 'ftp://', 'magnet:'))
+
     def do_GET(self):
         if not self._is_host_allowed() or not self._is_origin_allowed():
             self.send_response(403)
@@ -112,7 +131,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": "Forbidden: Origin or Host unauthorized"}).encode('utf-8'))
             return
 
-        if self.path in ['/', '/status', '/api/status']:
+        req_path = urllib.parse.urlsplit(self.path).path
+        if req_path in ['/', '/ping', '/status', '/api/status']:
             self._set_headers(200)
             port_num = self.server.server_address[1] if (self.server and hasattr(self.server, 'server_address')) else 9666
 
@@ -165,35 +185,48 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": "Forbidden: Origin or Host unauthorized"}).encode('utf-8'))
             return
 
-        content_length = int(self.headers.get('Content-Length', 0))
+        try:
+            content_length = int(self.headers.get('Content-Length', 0) or 0)
+        except (ValueError, TypeError):
+            self._set_headers(400)
+            self.wfile.write(json.dumps({"error": "Invalid Content-Length"}).encode('utf-8'))
+            return
+        if content_length < 0:
+            self._set_headers(400)
+            self.wfile.write(json.dumps({"error": "Invalid Content-Length"}).encode('utf-8'))
+            return
         # Protect against payload flooding DoS while allowing large M3U8 playlist caches (up to 16 MB)
         if content_length > 16 * 1024 * 1024:
             self._set_headers(413)
             self.wfile.write(json.dumps({"error": "Payload too large"}).encode('utf-8'))
             return
 
-        post_data = self.rfile.read(content_length).decode('utf-8', errors='ignore')
+        post_data = self.rfile.read(content_length).decode('utf-8', errors='ignore') if content_length > 0 else ""
         
         try:
             data = json.loads(post_data) if post_data else {}
         except Exception:
             data = {}
+        if not isinstance(data, dict):
+            data = {}
 
-        if self.path in ('/api/download', '/download'):
-            url = data.get('url', '').strip()
+        req_path = urllib.parse.urlsplit(self.path).path
+        origin = self.headers.get('Origin', '')
+        origin_trusted_for_silent = (not origin) or origin.lower().startswith((
+            'chrome-extension://', 'moz-extension://', 'edge-extension://',
+            'http://127.0.0.1', 'http://localhost'
+        ))
+
+        if req_path in ('/api/download', '/download'):
+            url = str(data.get('url', '') or '').strip()
             # Security: Validate URL scheme
-            if not (url.startswith('http://') or url.startswith('https://') or url.startswith('ftp://')):
+            if not self._is_allowed_url(url):
                 self._set_headers(400)
                 self.wfile.write(json.dumps({"success": False, "error": "Skema URL tidak diizinkan"}).encode('utf-8'))
                 return
 
-            raw_filename = data.get('filename', '').strip()
-            # Security: Extract basename first to completely neutralize ../ directory traversal
-            clean_base = os.path.basename(raw_filename.replace('\\', '/'))
-            safe_filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', clean_base).strip('. ')
-            # Fallback if filename becomes empty
-            if not safe_filename:
-                safe_filename = os.path.basename(url.split('?')[0].split('#')[0]) or "download_file"
+            raw_filename = str(data.get('filename', '') or '').strip()
+            safe_filename = self._sanitize_filename(raw_filename, url)
 
             from ..core.media_grabber import is_ad_or_junk_media
             if is_ad_or_junk_media(url, safe_filename):
@@ -201,17 +234,24 @@ class ApiHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "ok": False, "error": "URL video iklan atau preview diabaikan"}).encode('utf-8'))
                 return
 
-            download_payload = dict(data) if isinstance(data, dict) else {}
+            download_payload = dict(data)
             download_payload['url'] = url
             download_payload['filename'] = safe_filename
+            headers = dict(download_payload.get('headers') or {}) if isinstance(download_payload.get('headers'), dict) else {}
+            if data.get('referer') and 'Referer' not in headers:
+                headers['Referer'] = str(data['referer'])
+            if data.get('user_agent') and 'User-Agent' not in headers:
+                headers['User-Agent'] = str(data['user_agent'])
+            if data.get('cookies') and 'Cookie' not in headers:
+                headers['Cookie'] = str(data['cookies'])
+            download_payload['headers'] = headers
             
             # Security: Validate and sanitize save_dir
             if 'save_dir' in download_payload and not self._is_safe_save_dir(download_payload['save_dir']):
                 download_payload['save_dir'] = ''
 
             # Security: Prevent unauthorized silent downloads from arbitrary origins
-            origin = self.headers.get('Origin', '')
-            if origin and not (origin.lower().startswith(('chrome-extension://', 'moz-extension://', 'edge-extension://')) or origin.lower().startswith(('http://127.0.0.1', 'http://localhost'))):
+            if not origin_trusted_for_silent:
                 download_payload['silent'] = False
 
             if url and ApiHandler.server_instance:
@@ -227,20 +267,39 @@ class ApiHandler(BaseHTTPRequestHandler):
                 self._set_headers(400)
                 self.wfile.write(json.dumps({"success": False, "ok": False, "error": "URL tidak valid"}).encode('utf-8'))
         
-        elif self.path in ('/api/batch-download', '/batch-download'):
+        elif req_path in ('/api/batch-download', '/batch-download'):
             items = data.get('items', [])
             urls = data.get('urls', [])
-            if not items and urls:
+            if not items and isinstance(urls, list):
                 items = [{'url': u} for u in urls if isinstance(u, str)]
 
-            if items and ApiHandler.server_instance:
+            if isinstance(items, list) and items and ApiHandler.server_instance:
                 from ..core.media_grabber import is_ad_or_junk_media
                 filtered_items = []
                 for it in items:
-                    it_url = it.get('url', '') if isinstance(it, dict) else str(it)
-                    it_fn = it.get('filename', '') if isinstance(it, dict) else ''
+                    if isinstance(it, dict):
+                        it_copy = dict(it)
+                        it_url = str(it_copy.get('url', '') or '').strip()
+                        it_fn_raw = str(it_copy.get('filename', '') or '').strip()
+                    elif isinstance(it, str):
+                        it_url = it.strip()
+                        it_fn_raw = ''
+                        it_copy = {'url': it_url}
+                    else:
+                        continue
+                    if not self._is_allowed_url(it_url):
+                        continue
+                    it_fn = self._sanitize_filename(it_fn_raw, it_url) if it_fn_raw else ''
                     if not is_ad_or_junk_media(it_url, it_fn):
-                        filtered_items.append(it)
+                        it_copy['url'] = it_url
+                        if it_fn:
+                            it_copy['filename'] = it_fn
+                        filtered_items.append(it_copy)
+
+                if not filtered_items:
+                    self._set_headers(400)
+                    self.wfile.write(json.dumps({"success": False, "error": "No valid items provided"}).encode('utf-8'))
+                    return
 
                 safe_save = data.get('save_dir', '')
                 if safe_save and not self._is_safe_save_dir(safe_save):
@@ -249,9 +308,10 @@ class ApiHandler(BaseHTTPRequestHandler):
                 batch_payload = {
                     'referer': data.get('referer', ''),
                     'user_agent': data.get('user_agent', ''),
+                    'cookies': data.get('cookies', ''),
                     'save_dir': safe_save,
                     'items': filtered_items,
-                    'silent': bool(data.get('silent', False)),
+                    'silent': bool(data.get('silent', False)) and origin_trusted_for_silent,
                     'queue_only': bool(data.get('queue_only', False))
                 }
                 ApiHandler.server_instance.batch_requested.emit(batch_payload)
@@ -261,7 +321,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 self._set_headers(400)
                 self.wfile.write(json.dumps({"success": False, "error": "No items provided"}).encode('utf-8'))
 
-        elif self.path == '/api/video-detected':
+        elif req_path == '/api/video-detected':
             videos = data.get('videos', [])
             if isinstance(videos, list) and ApiHandler.server_instance:
                 from ..core.media_grabber import is_ad_or_junk_media
@@ -269,7 +329,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 clean_videos = []
                 for v in videos[:50]:
                     if isinstance(v, dict) and 'url' in v:
-                        v_url = v.get('url', '')
+                        v_url = str(v.get('url', '') or '')
                         v_name = v.get('name', '') or v.get('title', '')
                         v_height = v.get('height', 0)
                         if not is_ad_or_junk_media(v_url, v_name, v_height):
@@ -279,9 +339,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._set_headers(200)
             self.wfile.write(json.dumps({"success": True}).encode('utf-8'))
 
-        elif self.path == '/api/media_info':
-            url = data.get('url', '').strip()
-            if not (url.startswith('http://') or url.startswith('https://')):
+        elif req_path == '/api/media_info':
+            url = str(data.get('url', '') or '').strip()
+            if not url.lower().startswith(('http://', 'https://')):
                 self._set_headers(400)
                 self.wfile.write(json.dumps({"success": False, "error": "URL tidak valid"}).encode('utf-8'))
                 return
@@ -297,16 +357,13 @@ class ApiHandler(BaseHTTPRequestHandler):
                 self._set_headers(200)
                 self.wfile.write(json.dumps({"formats": [], "error": str(e)}).encode('utf-8'))
 
-        elif self.path in ('/api/restore', '/restore'):
+        elif req_path in ('/api/restore', '/restore'):
             target_hwnd = 0
             if ApiHandler.server_instance:
                 ApiHandler.server_instance.restore_requested.emit()
                 parent_win = ApiHandler.server_instance.parent()
                 if parent_win:
-                    try:
-                        target_hwnd = int(parent_win.winId())
-                    except Exception:
-                        pass
+                    target_hwnd = int(getattr(parent_win, "_cached_hwnd", 0) or 0)
             self._set_headers(200)
             self.wfile.write(json.dumps({
                 "success": True,

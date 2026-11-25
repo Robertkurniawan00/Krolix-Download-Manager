@@ -29,26 +29,38 @@ class SpeedLimiter:
             self.last_time = time.time()
 
     def wait_for_token(self, count: int):
-        if self.max_bytes_per_sec <= 0:
+        if count <= 0:
             return
-
-        while True:
+        remaining = float(count)
+        while remaining > 0:
             with self.lock:
-                now = time.time()
-                elapsed = now - self.last_time
-                self.last_time = now
-                self.tokens = min(self.max_bytes_per_sec, self.tokens + elapsed * self.max_bytes_per_sec)
-
-                if self.tokens >= count:
-                    self.tokens -= count
+                limit = self.max_bytes_per_sec
+                if limit <= 0:
                     return
-                
-                # Calculate sleep time needed
-                missing = count - self.tokens
-                sleep_time = missing / self.max_bytes_per_sec
-            
-            time.sleep(min(sleep_time, 0.1))
+                now = time.time()
+                elapsed = max(0.0, now - self.last_time)
+                self.last_time = now
+                self.tokens = min(float(limit), self.tokens + elapsed * limit)
+
+                # Consume up to `limit` per iteration so requests larger than 1s cap (e.g. 256KB chunk when limit < 256KB/s) never deadlock
+                step = min(remaining, float(limit))
+                if self.tokens >= step:
+                    self.tokens -= step
+                    remaining -= step
+                    if remaining <= 0:
+                        return
+                    sleep_time = 0.0
+                else:
+                    missing = step - self.tokens
+                    sleep_time = missing / limit
+
+            if sleep_time > 0:
+                time.sleep(min(sleep_time, 0.1))
 
     def acquire(self, count: int):
         """Alias for wait_for_token for worker compatibility."""
+        self.wait_for_token(count)
+
+    def throttle(self, count: int):
+        """Alias for wait_for_token for HLS/DASH worker compatibility."""
         self.wait_for_token(count)

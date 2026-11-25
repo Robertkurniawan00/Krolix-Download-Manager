@@ -7,6 +7,7 @@ Designed with Windows 11 Fluent Dark Titanium / Obsidian aesthetics.
 
 import os
 import time
+import threading
 from typing import Optional, List, Any
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
@@ -638,8 +639,18 @@ class TorrentSeedingDialog(QDialog):
     def _resume_selected(self):
         task = self._get_selected_task()
         if task and self.engine:
-            self.engine.resume_download(task.id)
+            self.engine.start_download(task.id)
             self._refresh_telemetry()
+
+    def closeEvent(self, event):
+        if hasattr(self, "timer") and self.timer:
+            self.timer.stop()
+        super().closeEvent(event)
+
+    def hideEvent(self, event):
+        if hasattr(self, "timer") and self.timer:
+            self.timer.stop()
+        super().hideEvent(event)
 
     def _edit_selected_days(self):
         task = self._get_selected_task()

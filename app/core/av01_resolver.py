@@ -232,12 +232,6 @@ class AV01Resolver:
 
         vid = video_id or cls.extract_video_id(url)
         if not vid:
-            # Check cached tokens for the most recently used video_id
-            with cls._lock:
-                if cls._token_cache:
-                    vid = next(reversed(cls._token_cache))
-
-        if not vid:
             return url
 
         token = cls.get_cdn_token(vid, force_refresh=force_refresh)
@@ -308,9 +302,11 @@ class AV01Resolver:
 
         meta = cls.get_video_metadata(video_id) or {}
         dvd_id = meta.get("dvd_id") or ""
+        seo_titles = meta.get("seo_titles")
+        title_trans = meta.get("title_translations")
         en_title = (
-            (meta.get("seo_titles") or {}).get("en")
-            or (meta.get("title_translations") or {}).get("en")
+            (seo_titles.get("en") if isinstance(seo_titles, dict) else None)
+            or (title_trans.get("en") if isinstance(title_trans, dict) else None)
             or meta.get("title")
             or ""
         )

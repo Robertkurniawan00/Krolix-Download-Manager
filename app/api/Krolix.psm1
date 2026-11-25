@@ -124,9 +124,10 @@ function Start-KrolixDownload {
         elseif (Test-Path $rootExe) { $targetExe = $rootExe }
 
         if ($targetExe) {
-            $argsList = @("/d", "`"$Url`"")
-            if ($Path) { $argsList += @("/p", "`"$Path`"") }
-            if ($Filename) { $argsList += @("/f", "`"$Filename`"") }
+            $esc = { param($v) ($v -replace '"', '\"').TrimEnd('\') }
+            $argsList = @("/d", "`"$(& $esc $Url)`"")
+            if ($Path) { $argsList += @("/p", "`"$(& $esc $Path)`"") }
+            if ($Filename) { $argsList += @("/f", "`"$(& $esc $Filename)`"") }
             if ($Silent.IsPresent) { $argsList += "/n" }
             if ($QueueOnly.IsPresent) { $argsList += "/a" }
 

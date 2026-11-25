@@ -173,17 +173,19 @@ namespace Krolix.Native
                 Array arr = pLinksArray as Array;
                 if (arr != null && arr.Rank == 2)
                 {
-                    int rowCount = arr.GetLength(0);
+                    int rLow = arr.GetLowerBound(0);
+                    int rHigh = arr.GetUpperBound(0);
+                    int cLow = arr.GetLowerBound(1);
                     int colCount = arr.GetLength(1);
 
-                    for (int i = 0; i < rowCount; i++)
+                    for (int i = rLow; i <= rHigh; i++)
                     {
-                        string url = GetArrayVal(arr, i, 0);
-                        string cookies = colCount > 1 ? GetArrayVal(arr, i, 1) : "";
-                        string descr = colCount > 2 ? GetArrayVal(arr, i, 2) : "";
-                        if (i == 0 && colCount > 3)
+                        string url = GetArrayVal(arr, i, cLow);
+                        string cookies = colCount > 1 ? GetArrayVal(arr, i, cLow + 1) : "";
+                        string descr = colCount > 2 ? GetArrayVal(arr, i, cLow + 2) : "";
+                        if (i == rLow && colCount > 3)
                         {
-                            userAgent = GetArrayVal(arr, 0, 3);
+                            userAgent = GetArrayVal(arr, rLow, cLow + 3);
                         }
 
                         if (!string.IsNullOrEmpty(url))
@@ -198,7 +200,9 @@ namespace Krolix.Native
                 }
                 else if (arr != null && arr.Rank == 1)
                 {
-                    for (int i = 0; i < arr.Length; i++)
+                    int low = arr.GetLowerBound(0);
+                    int high = arr.GetUpperBound(0);
+                    for (int i = low; i <= high; i++)
                     {
                         object v = arr.GetValue(i);
                         if (v != null)
@@ -501,8 +505,7 @@ namespace Krolix.Native
                     return 1;
                 }
 
-                byte[] buffer = new byte[BUFFER_SIZE];
-                using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, BUFFER_SIZE, FileOptions.SequentialScan))
+                using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan))
                 {
                     byte[] hash = hasher.ComputeHash(fs);
                     StringBuilder sb = new StringBuilder();
@@ -636,9 +639,10 @@ namespace Krolix.Native
             try
             {
                 HttpWebRequest req = (HttpWebRequest)WebRequest.Create(endpoint);
+                req.Proxy = null;
                 req.Method = "POST";
                 req.ContentType = "application/json; charset=utf-8";
-                req.Headers.Add("X-Zero-Client", "zero-native-engine");
+                req.Headers.Add("X-Krolix-Client", "krolix-native-engine");
                 req.Timeout = 2500;
 
                 byte[] data = Encoding.UTF8.GetBytes(json);
@@ -662,15 +666,21 @@ namespace Krolix.Native
             return false;
         }
 
+        private static string EscapeCliArg(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("\"", "\\\"").TrimEnd('\\');
+        }
+
         public static void LaunchZeroCli(string url, string saveDir, string fileName, bool silent, bool queueOnly)
         {
             string zeroExe = FindZeroExe();
             if (File.Exists(zeroExe))
             {
                 StringBuilder cli = new StringBuilder();
-                cli.AppendFormat("/d \"{0}\"", url);
-                if (!string.IsNullOrEmpty(saveDir)) cli.AppendFormat(" /p \"{0}\"", saveDir);
-                if (!string.IsNullOrEmpty(fileName)) cli.AppendFormat(" /f \"{0}\"", fileName);
+                cli.AppendFormat("/d \"{0}\"", EscapeCliArg(url));
+                if (!string.IsNullOrEmpty(saveDir)) cli.AppendFormat(" /p \"{0}\"", EscapeCliArg(saveDir));
+                if (!string.IsNullOrEmpty(fileName)) cli.AppendFormat(" /f \"{0}\"", EscapeCliArg(fileName));
                 if (silent) cli.Append(" /n");
                 if (queueOnly) cli.Append(" /a");
 
@@ -693,6 +703,12 @@ namespace Krolix.Native
 
             string pRoot = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "Krolix.exe"));
             if (File.Exists(pRoot)) return pRoot;
+
+            string pKrolix = Path.Combine(baseDir, "dist", "Krolix", "Krolix.exe");
+            if (File.Exists(pKrolix)) return pKrolix;
+
+            string pKrolixRoot = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "dist", "Krolix", "Krolix.exe"));
+            if (File.Exists(pKrolixRoot)) return pKrolixRoot;
 
             string p2 = Path.Combine(baseDir, "dist", "Zero", "Krolix.exe");
             if (File.Exists(p2)) return p2;
@@ -740,7 +756,8 @@ namespace Krolix.Native
                         {
                             key.SetValue("", "Krolix.LinkTransmitter");
 
-                            string dllPath = Path.Combine(Path.GetDirectoryName(selfExe), "KrolixComBridge.dll");
+                            string selfDir = Path.GetDirectoryName(selfExe) ?? AppDomain.CurrentDomain.BaseDirectory;
+                            string dllPath = Path.Combine(selfDir, "KrolixComBridge.dll");
                             if (File.Exists(dllPath))
                             {
                                 try { key.DeleteSubKeyTree("LocalServer32", false); } catch { }
@@ -748,7 +765,7 @@ namespace Krolix.Native
                                 {
                                     ip.SetValue("", "mscoree.dll");
                                     ip.SetValue("ThreadingModel", "Both");
-                                    ip.SetValue("Class", "Zero.Com.KrolixLinkTransmitter");
+                                    ip.SetValue("Class", "Krolix.Com.KrolixLinkTransmitter");
                                     ip.SetValue("Assembly", "KrolixComBridge, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null");
                                     ip.SetValue("RuntimeVersion", "v4.0.30319");
                                     ip.SetValue("CodeBase", "file:///" + dllPath.Replace('\\', '/'));
@@ -810,7 +827,27 @@ namespace Krolix.Native
         public static string EscapeJson(string s)
         {
             if (string.IsNullOrEmpty(s)) return "";
-            return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n").Replace("\t", "\\t");
+            StringBuilder sb = new StringBuilder(s.Length);
+            foreach (char c in s)
+            {
+                switch (c)
+                {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '"': sb.Append("\\\""); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    case '\b': sb.Append("\\b"); break;
+                    case '\f': sb.Append("\\f"); break;
+                    default:
+                        if (c < ' ')
+                            sb.AppendFormat("\\u{0:x4}", (int)c);
+                        else
+                            sb.Append(c);
+                        break;
+                }
+            }
+            return sb.ToString();
         }
     }
 }

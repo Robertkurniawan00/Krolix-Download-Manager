@@ -13,6 +13,7 @@ import queue
 import threading
 import urllib.request
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 from typing import Dict, List, Set, Optional, Callable
 from dataclasses import dataclass
@@ -91,6 +92,7 @@ class SiteCrawler(threading.Thread):
         start_url: str,
         max_depth: int = 1,
         stay_on_domain: bool = True,
+        allow_subdomains: bool = True,
         categories: Optional[List[str]] = None,
         custom_extensions: Optional[List[str]] = None,
         max_pages: int = 100,
@@ -104,6 +106,7 @@ class SiteCrawler(threading.Thread):
         self.start_url = start_url.strip()
         self.max_depth = max_depth
         self.stay_on_domain = stay_on_domain
+        self.allow_subdomains = allow_subdomains
         self.categories = set(categories) if categories else set(self.CATEGORY_EXTENSIONS.keys())
         self.custom_extensions = set(e.lower() if e.startswith(".") else f".{e.lower()}" for e in (custom_extensions or []))
         self.max_pages = max_pages
@@ -120,6 +123,7 @@ class SiteCrawler(threading.Thread):
 
         parsed = urllib.parse.urlparse(self.start_url)
         self.base_domain = parsed.netloc.lower()
+        self.root_domain = self.base_domain[4:] if self.base_domain.startswith("www.") else self.base_domain
 
         self.visited_urls: Set[str] = set()
         self.found_items: Dict[str, GrabbedItem] = {}
@@ -183,6 +187,15 @@ class SiteCrawler(threading.Thread):
         except Exception:
             pass
 
+    def _is_known_binary_url(self, url: str) -> bool:
+        path = urllib.parse.urlparse(url).path.lower()
+        _, ext = os.path.splitext(path)
+        if not ext:
+            return False
+        if self.custom_extensions and ext in self.custom_extensions:
+            return True
+        return any(ext in ext_set for ext_set in self.CATEGORY_EXTENSIONS.values())
+
     def run(self):
         opener = self._get_opener()
         crawl_queue = queue.Queue()
@@ -195,91 +208,99 @@ class SiteCrawler(threading.Thread):
         }
         req_headers.update(self.headers)
 
-        while not crawl_queue.empty() and not self.cancel_event.is_set():
-            if not self.pause_event.is_set():
-                self.pause_event.wait()
-                if self.cancel_event.is_set():
+        probe_pool = ThreadPoolExecutor(max_workers=4)
+        try:
+            while not crawl_queue.empty() and not self.cancel_event.is_set():
+                if not self.pause_event.is_set():
+                    self.pause_event.wait()
+                    if self.cancel_event.is_set():
+                        break
+
+                if self.scanned_pages >= self.max_pages:
                     break
 
-            if self.scanned_pages >= self.max_pages:
-                break
+                current_url, depth = crawl_queue.get()
+                self.scanned_pages += 1
 
-            current_url, depth = crawl_queue.get()
-            self.scanned_pages += 1
+                if self.on_progress:
+                    self.on_progress(self.scanned_pages, len(self.found_items))
 
-            if self.on_progress:
-                self.on_progress(self.scanned_pages, len(self.found_items))
-
-            try:
-                req = urllib.request.Request(current_url, headers=req_headers)
-                with opener.open(req, timeout=15) as resp:
-                    c_type = resp.headers.get("Content-Type", "").lower()
-                    
-                    matches, cat = self._matches_filters(current_url)
-                    if matches and current_url not in self.found_items:
-                        item = GrabbedItem(
-                            url=current_url,
-                            filename=self._extract_filename(current_url),
-                            category=cat,
-                            source_page=current_url
-                        )
-                        cl = resp.headers.get("Content-Length")
-                        if cl and cl.isdigit():
-                            item.filesize = int(cl)
-                        self.found_items[current_url] = item
-                        if self.on_item_found:
-                            self.on_item_found(item)
-
-                    if "text/html" not in c_type and "xhtml" not in c_type:
-                        continue
-
-                    html_bytes = resp.read(2 * 1024 * 1024)
-                    try:
-                        html_text = html_bytes.decode(resp.headers.get_content_charset() or "utf-8", errors="replace")
-                    except Exception:
-                        html_text = html_bytes.decode("utf-8", errors="replace")
-
-                    parser = LinkExtractor(current_url)
-                    try:
-                        parser.feed(html_text)
-                    except Exception:
-                        pass
-
-                    for media_url in parser.media_links:
-                        if self.cancel_event.is_set():
-                            break
+                try:
+                    req = urllib.request.Request(current_url, headers=req_headers)
+                    with opener.open(req, timeout=15) as resp:
+                        c_type = resp.headers.get("Content-Type", "").lower()
                         
-                        m_ok, m_cat = self._matches_filters(media_url)
-                        if m_ok and media_url not in self.found_items:
+                        matches, cat = self._matches_filters(current_url)
+                        if matches and current_url not in self.found_items:
                             item = GrabbedItem(
-                                url=media_url,
-                                filename=self._extract_filename(media_url),
-                                category=m_cat,
+                                url=current_url,
+                                filename=self._extract_filename(current_url),
+                                category=cat,
                                 source_page=current_url
                             )
-                            self.found_items[media_url] = item
-                            
-                            threading.Thread(target=self._probe_size_async, args=(item, opener), daemon=True).start()
-
+                            cl = resp.headers.get("Content-Length")
+                            if cl and cl.isdigit():
+                                item.filesize = int(cl)
+                            self.found_items[current_url] = item
                             if self.on_item_found:
                                 self.on_item_found(item)
 
-                    if depth < self.max_depth:
-                        for page_url in parser.page_links:
-                            if page_url in self.visited_urls:
-                                continue
+                        if "text/html" not in c_type and "xhtml" not in c_type:
+                            continue
 
-                            p_domain = urllib.parse.urlparse(page_url).netloc.lower()
-                            if self.stay_on_domain and p_domain != self.base_domain and not p_domain.endswith("." + self.base_domain):
-                                continue
+                        html_bytes = resp.read(2 * 1024 * 1024)
+                        try:
+                            html_text = html_bytes.decode(resp.headers.get_content_charset() or "utf-8", errors="replace")
+                        except Exception:
+                            html_text = html_bytes.decode("utf-8", errors="replace")
 
-                            is_media, _ = self._matches_filters(page_url)
-                            if not is_media:
-                                self.visited_urls.add(page_url)
-                                crawl_queue.put((page_url, depth + 1))
+                        parser = LinkExtractor(current_url)
+                        try:
+                            parser.feed(html_text)
+                        except Exception:
+                            pass
 
-            except Exception:
-                pass
+                        for media_url in parser.media_links:
+                            if self.cancel_event.is_set():
+                                break
+                            
+                            m_ok, m_cat = self._matches_filters(media_url)
+                            if m_ok and media_url not in self.found_items:
+                                item = GrabbedItem(
+                                    url=media_url,
+                                    filename=self._extract_filename(media_url),
+                                    category=m_cat,
+                                    source_page=current_url
+                                )
+                                self.found_items[media_url] = item
+                                
+                                probe_pool.submit(self._probe_size_async, item, opener)
+
+                                if self.on_item_found:
+                                    self.on_item_found(item)
+
+                        if depth < self.max_depth:
+                            for page_url in parser.page_links:
+                                if page_url in self.visited_urls:
+                                    continue
+
+                                p_domain = urllib.parse.urlparse(page_url).netloc.lower()
+                                if self.stay_on_domain:
+                                    if self.allow_subdomains:
+                                        same_site = (p_domain == self.root_domain or p_domain.endswith("." + self.root_domain))
+                                    else:
+                                        same_site = (p_domain == self.base_domain)
+                                    if not same_site:
+                                        continue
+
+                                if not self._is_known_binary_url(page_url):
+                                    self.visited_urls.add(page_url)
+                                    crawl_queue.put((page_url, depth + 1))
+
+                except Exception:
+                    pass
+        finally:
+            probe_pool.shutdown(wait=not self.cancel_event.is_set(), cancel_futures=self.cancel_event.is_set())
 
         if self.on_finished:
             self.on_finished(list(self.found_items.values()))

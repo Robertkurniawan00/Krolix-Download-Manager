@@ -321,10 +321,13 @@ class TorrentSearchDialog(QDialog):
                 if "semua" in cat_filter:
                     filtered.append(item)
 
-        if not filtered and self._all_results:
-            filtered = self._all_results
-
         self._populate_table(filtered)
+
+    def closeEvent(self, event):
+        if hasattr(self, "_worker") and self._worker and self._worker.isRunning():
+            self._worker.quit()
+            self._worker.wait(1500)
+        super().closeEvent(event)
 
     def _populate_table(self, items: list):
         self.table.setRowCount(len(items))

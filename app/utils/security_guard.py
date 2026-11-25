@@ -156,9 +156,13 @@ class SecurityGuard:
                 return True
 
             # 2. CheckRemoteDebuggerPresent API
-            is_remote_debugger = ctypes.c_bool(False)
-            h_proc = ctypes.windll.kernel32.GetCurrentProcess()
-            ctypes.windll.kernel32.CheckRemoteDebuggerPresent(h_proc, ctypes.byref(is_remote_debugger))
+            k32 = ctypes.windll.kernel32
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            k32.CheckRemoteDebuggerPresent.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
+            k32.CheckRemoteDebuggerPresent.restype = wintypes.BOOL
+            is_remote_debugger = wintypes.BOOL(False)
+            h_proc = k32.GetCurrentProcess()
+            k32.CheckRemoteDebuggerPresent(h_proc, ctypes.byref(is_remote_debugger))
             if is_remote_debugger.value:
                 return True
 
@@ -179,6 +183,7 @@ class SecurityGuard:
         blacklisted = [obf_dec(b).lower() for b in cls._RE_PROCESSES_ENC]
 
         # 1. First attempt: Native Win32 Toolhelp32Snapshot (zero external dependencies)
+        toolhelp_ok = False
         try:
             class PROCESSENTRY32W(ctypes.Structure):
                 _fields_ = [
@@ -195,23 +200,39 @@ class SecurityGuard:
                 ]
 
             TH32CS_SNAPPROCESS = 0x00000002
-            h_snap = ctypes.windll.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-            if h_snap and h_snap != -1:
-                pe = PROCESSENTRY32W()
-                pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-                if ctypes.windll.kernel32.Process32FirstW(h_snap, ctypes.byref(pe)):
-                    while True:
-                        name = pe.szExeFile.lower()
-                        if any(target in name for target in blacklisted):
-                            ctypes.windll.kernel32.CloseHandle(h_snap)
-                            return True
-                        if not ctypes.windll.kernel32.Process32NextW(h_snap, ctypes.byref(pe)):
-                            break
-                ctypes.windll.kernel32.CloseHandle(h_snap)
+            INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
+            k32 = ctypes.windll.kernel32
+            k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+            k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+            k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+            k32.Process32FirstW.restype = wintypes.BOOL
+            k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+            k32.Process32NextW.restype = wintypes.BOOL
+            k32.CloseHandle.argtypes = [wintypes.HANDLE]
+            k32.CloseHandle.restype = wintypes.BOOL
+
+            h_snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+            if h_snap and h_snap != INVALID_HANDLE_VALUE:
+                try:
+                    pe = PROCESSENTRY32W()
+                    pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+                    if k32.Process32FirstW(h_snap, ctypes.byref(pe)):
+                        toolhelp_ok = True
+                        while True:
+                            name = pe.szExeFile.lower()
+                            if any(target in name for target in blacklisted):
+                                return True
+                            if not k32.Process32NextW(h_snap, ctypes.byref(pe)):
+                                break
+                finally:
+                    k32.CloseHandle(h_snap)
         except Exception:
             pass
 
-        # 2. Fallback attempt: psutil if available
+        if toolhelp_ok:
+            return False
+
+        # 2. Fallback attempt: psutil if available and Toolhelp32 failed
         try:
             import psutil
             for proc in psutil.process_iter(['name']):
@@ -285,22 +306,18 @@ class SecurityGuard:
         if code.co_name in ("<lambda>", "<genexpr>"):
             return False
 
-        # Reject foreign scripts outside frozen runtime
-        if getattr(sys, "frozen", False):
-            fn = (code.co_filename or "").lower()
-            if "temp" in fn or "desktop" in fn or "downloads" in fn:
-                return False
-
         return True
 
     @staticmethod
     def get_performance_counter() -> int:
-        """Returns high-resolution hardware performance counter for timing anomaly checks."""
+        """Returns high-resolution hardware performance counter in microseconds for timing anomaly checks."""
         if sys.platform == "win32":
             try:
                 cnt = ctypes.c_int64(0)
-                ctypes.windll.kernel32.QueryPerformanceCounter(ctypes.byref(cnt))
-                return cnt.value
+                freq = ctypes.c_int64(0)
+                k32 = ctypes.windll.kernel32
+                if k32.QueryPerformanceCounter(ctypes.byref(cnt)) and k32.QueryPerformanceFrequency(ctypes.byref(freq)) and freq.value > 0:
+                    return (cnt.value * 1_000_000) // freq.value
             except Exception:
                 pass
         import time

@@ -32,10 +32,18 @@ from ..utils.win32_native import Win32Native
 
 
 class DownloadEngine:
+    _instance: Any = None
     active_refresh_dialog: Any = None
     active_refresh_task_id: Optional[str] = None
 
+    @classmethod
+    def get_instance(cls, db: Optional[Database] = None, speed_limiter: Optional[SpeedLimiter] = None):
+        if cls._instance is None:
+            cls._instance = cls(db=db or Database.get_instance(), speed_limiter=speed_limiter)
+        return cls._instance
+
     def __init__(self, db: Database, speed_limiter: Optional[SpeedLimiter] = None):
+        DownloadEngine._instance = self
         self.db = db
         self.speed_limiter = speed_limiter or SpeedLimiter()
         self.sound_manager = SoundManager(self.db)
@@ -48,12 +56,13 @@ class DownloadEngine:
         self.ytdlp_workers: Dict[str, Any] = {}
         self.pause_events: Dict[str, threading.Event] = {}
         self.cancel_events: Dict[str, threading.Event] = {}
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
 
         # Listeners / Callbacks
         self.on_task_updated: Optional[Callable[[DownloadTask], None]] = None
         self.on_task_completed: Optional[Callable[[DownloadTask], None]] = None
         self.on_task_failed: Optional[Callable[[DownloadTask, str], None]] = None
+        self.on_exit_requested: Optional[Callable[[], None]] = None
 
         # Speed monitor
         self._speed_tracker: Dict[str, List[int]] = {}
@@ -382,7 +391,8 @@ class DownloadEngine:
         task_id: Optional[str] = None,
         zero_log: bool = False,
         on_duplicate_found: Optional[Callable] = None,
-        description: str = ""
+        description: str = "",
+        category: Optional[str] = None
     ) -> DownloadTask:
         task_id = task_id or str(uuid.uuid4())
         # Auto-resolve PikPak share link to direct CDN download stream
@@ -428,7 +438,8 @@ class DownloadEngine:
         )
 
         # Check if URL is a BitTorrent Magnet link or .torrent file
-        is_torrent = url.startswith("magnet:") or url.lower().endswith(".torrent") or (os.path.isfile(url) and url.lower().endswith(".torrent"))
+        url_path_lower = urlparse(url).path.lower()
+        is_torrent = url.startswith("magnet:") or url_path_lower.endswith(".torrent") or (os.path.isfile(url) and url.lower().endswith(".torrent"))
         if is_torrent:
             from .torrent_downloader import TorrentWorker
             t_info = None
@@ -438,7 +449,7 @@ class DownloadEngine:
             if total_bytes is None or total_bytes <= 0:
                 total_bytes = t_info.get("total_bytes", -1) if t_info else -1
             resumable = True
-            category = "Torrents"
+            category = category or "Torrents"
         # Check if URL is an HLS (.m3u8) or DASH (.mpd) stream
         elif is_hls:
             req_headers["is_hls"] = "true"
@@ -470,14 +481,14 @@ class DownloadEngine:
                 raw_filename = f"{base_f}.mp4"
             total_bytes = -1
             resumable = True # REAL RESUME CAPABILITY!
-            category = "Videos"
+            category = category or "Videos"
         # Check if URL is a yt-dlp media task
         elif headers and (headers.get("is_ytdlp") in ["true", True, 1, "1"]):
             req_headers["is_ytdlp"] = "true"
             raw_filename = filename or "media_download.mp4"
             total_bytes = -1
             resumable = True
-            category = "Music" if headers.get("download_mode") == "audio" else "Videos"
+            category = category or ("Music" if headers.get("download_mode") == "audio" else "Videos")
         else:
             # Check if filename was provided and whether it has an extension
             _, given_ext = os.path.splitext(filename or "")
@@ -485,9 +496,12 @@ class DownloadEngine:
             if total_bytes is not None and total_bytes > 0 and given_ext:
                 raw_filename = filename
                 resumable = True if resumable is None else resumable
-                category = get_category_from_filename(raw_filename)
+                category = category or get_category_from_filename(raw_filename)
             else:
                 probe = self.probe_url(url, headers=req_headers, proxy=final_proxy)
+                if probe.get("is_hls"):
+                    is_hls = True
+                    req_headers["is_hls"] = "true"
                 probe_name = probe.get("filename")
                 _, probe_ext = os.path.splitext(probe_name or "")
                 if filename:
@@ -502,7 +516,7 @@ class DownloadEngine:
                     total_bytes = probe.get("total_bytes", -1)
                 if resumable is None:
                     resumable = probe.get("resumable", False)
-                category = probe.get("category", get_category_from_filename(raw_filename))
+                category = category or probe.get("category", get_category_from_filename(raw_filename))
 
         final_filename = sanitize_filename(os.path.basename(raw_filename))
         abs_save_dir = os.path.abspath(save_dir)
@@ -510,11 +524,16 @@ class DownloadEngine:
         # Smart Category Subfolder Auto-Routing
         auto_subfolders = self.db.get_setting("category_subfolders", "true") == "true"
         if auto_subfolders and category and category != "General":
-            cat_key = f"category_dir_{category.lower()}"
+            cat_low = category.lower()
+            cat_key = f"category_dir_{cat_low}"
             custom_cat_dir = self.db.get_setting(cat_key, "").strip()
+            if not custom_cat_dir and cat_low == "videos":
+                custom_cat_dir = self.db.get_setting("category_dir_video", "").strip()
+            elif not custom_cat_dir and cat_low == "video":
+                custom_cat_dir = self.db.get_setting("category_dir_videos", "").strip()
             if custom_cat_dir and os.path.isdir(custom_cat_dir):
                 abs_save_dir = custom_cat_dir
-            elif not abs_save_dir.lower().endswith(category.lower()):
+            elif not abs_save_dir.lower().endswith(cat_low) and not (cat_low == "videos" and abs_save_dir.lower().endswith("video")):
                 abs_save_dir = os.path.join(abs_save_dir, category)
 
         os.makedirs(abs_save_dir, exist_ok=True)
@@ -1091,13 +1110,13 @@ class DownloadEngine:
                 embed_thumbnail=str(hdrs.get("embed_thumbnail", "true")).lower() in ("true", "1"),
                 embed_metadata=str(hdrs.get("embed_metadata", "true")).lower() in ("true", "1"),
                 concurrent_fragments=8,
-                use_aria2=True,
+                use_aria2=False,
                 cookies_browser=hdrs.get("cookies_browser") or None,
                 proxy=task.proxy
             )
             self.ytdlp_workers[task.id] = ytdlp_worker
             task.status = DownloadStatus.DOWNLOADING
-            self.db.save_task(task)
+            self._save_task_if_needed(task)
             ytdlp_worker.start()
 
             if self.on_task_updated:
@@ -1148,7 +1167,7 @@ class DownloadEngine:
                 cancel_event=cancel_event,
                 on_bytes_received=lambda b, tid=task.id: self._on_bytes_received(tid, b),
                 on_finished=lambda idx, success, err, tid=task.id: self._on_segment_finished(tid, idx, success, err),
-                headers=task.headers,
+                headers=dict(task.headers or {}),
                 proxy=task.proxy,
                 on_total_bytes_discovered=lambda tot, tid=task.id: self._on_total_bytes_discovered(tid, tot),
                 on_url_refreshed=lambda nu, nh, tid=task.id: self._on_worker_url_refreshed(tid, nu, nh)
@@ -1157,7 +1176,7 @@ class DownloadEngine:
 
         self.workers[task.id] = workers
         task.status = DownloadStatus.DOWNLOADING
-        self.db.save_task(task)
+        self._save_task_if_needed(task)
 
         for w in workers:
             w.start()
@@ -1167,6 +1186,55 @@ class DownloadEngine:
 
     def resume_task(self, task_id: str):
         """Resume / start download for a task."""
+        self.start_download(task_id)
+
+    def redownload_task(self, task_id: str):
+        """Reset downloaded bytes/segments and restart a download from scratch."""
+        with self.lock:
+            task = self.tasks.get(task_id)
+            if not task:
+                return
+            if task.status in (DownloadStatus.DOWNLOADING, DownloadStatus.CONNECTING):
+                self.pause_download(task_id)
+            task.downloaded_bytes = 0
+            task.speed = 0.0
+            task.eta = 0
+            task.error_message = ""
+            task.status = DownloadStatus.QUEUED
+            is_hls = (
+                ".m3u8" in (task.url or "").lower()
+                or ".mpd" in (task.url or "").lower()
+                or (task.headers and task.headers.get("is_hls") in ["true", True, 1, "1"])
+            )
+            is_ytdlp = bool(task.headers and task.headers.get("is_ytdlp") in ["true", True, 1, "1"])
+            if task.save_path and os.path.isfile(task.save_path) and not getattr(task, "is_torrent", False):
+                try:
+                    os.remove(task.save_path)
+                except Exception:
+                    pass
+            if not getattr(task, "is_torrent", False) and not is_hls and not is_ytdlp:
+                if task.resumable and task.total_bytes > 0:
+                    n = max(1, len(task.segments) or task.connections or 1)
+                    chunk = task.total_bytes // n
+                    task.segments = [
+                        SegmentModel(
+                            index=i,
+                            start_byte=i * chunk,
+                            end_byte=((i * chunk + chunk - 1) if i < n - 1 else (task.total_bytes - 1)),
+                            downloaded_bytes=0,
+                            status="Idle",
+                        )
+                        for i in range(n)
+                    ]
+                else:
+                    end_b = (task.total_bytes - 1) if (task.total_bytes and task.total_bytes > 0) else -1
+                    task.segments = [SegmentModel(index=0, start_byte=0, end_byte=end_b, downloaded_bytes=0, status="Idle")]
+            else:
+                for seg in task.segments:
+                    seg.downloaded_bytes = 0
+                    seg.status = "Idle"
+                    seg.progress = 0.0
+            self._save_task_if_needed(task)
         self.start_download(task_id)
 
     def pause_download(self, task_id: str):
@@ -1206,16 +1274,18 @@ class DownloadEngine:
                 if worker:
                     worker.stop()
 
-
             if task_id in self.hls_workers:
-                worker = self.hls_workers.get(task_id)
+                worker = self.hls_workers.pop(task_id, None)
                 if worker:
                     worker.stop()
+
+            if task_id in self.ytdlp_workers:
+                self.ytdlp_workers.pop(task_id, None)
 
             task.status = DownloadStatus.PAUSED
             task.speed = 0.0
             task.upload_speed = 0.0
-            self.db.save_task(task)
+            self._save_task_if_needed(task)
 
         if self.on_task_updated:
             self.on_task_updated(task)
@@ -1230,6 +1300,11 @@ class DownloadEngine:
         self._monitor_running = False
         self.pause_all()
         for worker in list(self.hls_workers.values()):
+            try:
+                worker.stop()
+            except Exception:
+                pass
+        for worker in list(self.torrent_workers.values()):
             try:
                 worker.stop()
             except Exception:
@@ -1256,6 +1331,9 @@ class DownloadEngine:
             event = self.cancel_events.get(task_id)
             if event:
                 event.set()
+            p_event = self.pause_events.get(task_id)
+            if p_event:
+                p_event.set()
 
             if task_id in self.workers:
                 workers = self.workers.pop(task_id, [])
@@ -1270,7 +1348,6 @@ class DownloadEngine:
                 if worker:
                     worker.stop()
 
-
             if task_id in self.hls_workers:
                 worker = self.hls_workers.pop(task_id, None)
                 if worker:
@@ -1282,7 +1359,7 @@ class DownloadEngine:
             task.status = DownloadStatus.CANCELED
             task.speed = 0.0
             task.upload_speed = 0.0
-            self.db.save_task(task)
+            self._save_task_if_needed(task)
 
             if delete_file:
                 if os.path.exists(task.save_path):
@@ -1366,6 +1443,11 @@ class DownloadEngine:
             self.on_task_updated(task)
 
     def _on_segment_finished(self, task_id: str, index: int, success: bool, error: Optional[str]):
+        completed_task = None
+        failed_task = None
+        failed_err = None
+        updated_task = None
+
         with self.lock:
             task = self.tasks.get(task_id)
             if not task or task.status != DownloadStatus.DOWNLOADING:
@@ -1375,7 +1457,6 @@ class DownloadEngine:
             any_error = any(s.status == "Error" for s in task.segments)
 
             if all_done:
-                # Clean up workers and cancel events to release all OS file locks immediately
                 cancel_ev = self.cancel_events.pop(task_id, None)
                 if cancel_ev:
                     cancel_ev.set()
@@ -1400,34 +1481,10 @@ class DownloadEngine:
                 else:
                     task.downloaded_bytes = task.total_bytes if task.total_bytes > 0 else task.downloaded_bytes
 
-                # Automatically detect and fix file extension from magic bytes if missing
                 self._auto_detect_and_fix_extension(task)
-
-                # Checksum verification if requested
-                if task.checksum:
-                    try:
-                        valid, actual_hash = FileHasher.verify_hash(task.save_path, task.checksum, task.checksum_type)
-                        if not valid:
-                            task.error_message = f"Checksum mismatch! Expected: {task.checksum[:8]}..., Got: {actual_hash[:8]}..."
-                    except Exception as he:
-                        task.error_message = f"Checksum error: {str(he)}"
-
-                # Auto Extract if requested
-                if task.auto_extract and ArchiveExtractor.is_archive(task.save_path):
-                    threading.Thread(target=ArchiveExtractor.extract, args=(task.save_path,), daemon=True).start()
-
-                self.db.save_task(task)
-
-                # Antivirus Auto-Scan
-                AntivirusScanner.scan_file_async(task.save_path, db=self.db)
-
-                # Post action on completion (shutdown, sleep, etc.)
-                if task.post_action and task.post_action != "none":
-                    PostActionManager.execute(task.post_action)
-
-                self.sound_manager.play_complete()
-                if self.on_task_completed:
-                    self.on_task_completed(task)
+                self._save_task_if_needed(task)
+                completed_task = task
+                updated_task = task
             elif any_error:
                 cancel_ev = self.cancel_events.pop(task_id, None)
                 if cancel_ev:
@@ -1444,16 +1501,47 @@ class DownloadEngine:
                 if "11001" in err_clean or "getaddrinfo" in err_clean:
                     err_clean = "Server / Host tidak ditemukan (Domain offline / DNS Error)"
                 task.error_message = err_clean
-                self.db.save_task(task)
-                self.sound_manager.play_error()
-                if self.on_task_failed:
-                    self.on_task_failed(task, task.error_message)
+                self._save_task_if_needed(task)
+                failed_task = task
+                failed_err = task.error_message
+                updated_task = task
             elif not any_error and task.resumable and task.total_bytes > 0:
-                # Zero Dynamic Work-Stealing: Re-allocate finished connection to steal largest remaining chunk
                 self._try_split_largest_segment(task)
+                updated_task = task
 
-        if self.on_task_updated:
-            self.on_task_updated(task)
+        # Perform slow I/O (hashing, AV scan, callbacks, post-actions) outside engine lock
+        if completed_task is not None:
+            if completed_task.checksum:
+                try:
+                    valid, actual_hash = FileHasher.verify_hash(completed_task.save_path, completed_task.checksum, completed_task.checksum_type)
+                    if not valid:
+                        completed_task.error_message = f"Checksum mismatch! Expected: {completed_task.checksum[:8]}..., Got: {actual_hash[:8]}..."
+                        self._save_task_if_needed(completed_task)
+                except Exception as he:
+                    completed_task.error_message = f"Checksum error: {str(he)}"
+                    self._save_task_if_needed(completed_task)
+
+            if completed_task.auto_extract and ArchiveExtractor.is_archive(completed_task.save_path):
+                threading.Thread(target=ArchiveExtractor.extract, args=(completed_task.save_path,), daemon=True).start()
+
+            AntivirusScanner.scan_file_async(completed_task.save_path, db=self.db)
+
+            if completed_task.post_action and completed_task.post_action != "none":
+                if completed_task.post_action == "exit" and self.on_exit_requested:
+                    self.on_exit_requested()
+                else:
+                    PostActionManager.execute(completed_task.post_action)
+
+            self.sound_manager.play_complete()
+            if self.on_task_completed:
+                self.on_task_completed(completed_task)
+        elif failed_task is not None:
+            self.sound_manager.play_error()
+            if self.on_task_failed:
+                self.on_task_failed(failed_task, failed_err)
+
+        if updated_task is not None and self.on_task_updated:
+            self.on_task_updated(updated_task)
 
 
     def _try_split_largest_segment(self, task: DownloadTask):
@@ -1618,11 +1706,12 @@ class DownloadEngine:
     def _speed_monitor_loop(self):
         while self._monitor_running:
             time.sleep(1.0)
+            to_notify = []
             with self.lock:
                 for task_id, task in list(self.tasks.items()):
                     if task.status == DownloadStatus.DOWNLOADING:
-                        # Skip HLS and Torrent tasks: they manage their own smoothed speed and ETA callbacks
-                        if task_id in self.hls_workers or task_id in self.torrent_workers:
+                        # Skip HLS, Torrent, and yt-dlp tasks: they manage their own smoothed speed and ETA callbacks
+                        if task_id in self.hls_workers or task_id in self.torrent_workers or task_id in self.ytdlp_workers:
                             continue
 
                         bytes_list = self._speed_tracker.pop(task_id, [])
@@ -1635,9 +1724,11 @@ class DownloadEngine:
                         else:
                             task.eta = 0.0
                         
-                        self.db.save_task(task)
-                        if self.on_task_updated:
-                            self.on_task_updated(task)
+                        self._save_task_if_needed(task)
+                        to_notify.append(task)
+            if self.on_task_updated:
+                for task in to_notify:
+                    self.on_task_updated(task)
 
 
 class DownloadWorker(QObject):
@@ -1677,6 +1768,11 @@ class DownloadWorker(QObject):
     def pause(self):
         self._pause_event.clear()
         self.task.status = DownloadStatus.PAUSED
+        for sw in list(self._segment_workers):
+            try:
+                sw.pause()
+            except Exception:
+                pass
 
     def resume(self):
         self._pause_event.set()
@@ -1686,6 +1782,11 @@ class DownloadWorker(QObject):
         self._cancel_event.set()
         self._pause_event.set()
         self.task.status = DownloadStatus.CANCELED
+        for sw in list(self._segment_workers):
+            try:
+                sw.stop()
+            except Exception:
+                pass
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -1736,11 +1837,12 @@ class DownloadWorker(QObject):
                 from .segment import SegmentManager
                 self.task.segments = SegmentManager.create_segments(self.task.total_bytes, num_conns)
 
-            # Pre-allocate file if total_bytes > 0
+            # Pre-allocate file if total_bytes > 0 without corrupting resumed data
             if self.task.total_bytes > 0:
-                with open(dest_path, "r+b" if os.path.exists(dest_path) else "wb") as f:
-                    f.seek(self.task.total_bytes - 1)
-                    f.write(b"\0")
+                if not os.path.exists(dest_path) or os.path.getsize(dest_path) < self.task.total_bytes:
+                    with open(dest_path, "r+b" if os.path.exists(dest_path) else "wb") as f:
+                        f.seek(self.task.total_bytes - 1)
+                        f.write(b"\0")
             elif not os.path.exists(dest_path):
                 with open(dest_path, "wb") as f:
                     pass
@@ -1797,6 +1899,8 @@ class DownloadWorker(QObject):
 
             if self._cancel_event.is_set():
                 self.task.status = DownloadStatus.CANCELED
+            elif not self._pause_event.is_set() or self.task.status == DownloadStatus.PAUSED:
+                self.task.status = DownloadStatus.PAUSED
             elif has_error:
                 self.task.status = DownloadStatus.ERROR
                 self.task.error_message = has_error[0]

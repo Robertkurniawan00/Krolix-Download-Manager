@@ -165,17 +165,19 @@ namespace Krolix.Com
                 Array arr = pLinksArray as Array;
                 if (arr != null && arr.Rank == 2)
                 {
-                    int rowCount = arr.GetLength(0);
+                    int rLow = arr.GetLowerBound(0);
+                    int rHigh = arr.GetUpperBound(0);
+                    int cLow = arr.GetLowerBound(1);
                     int colCount = arr.GetLength(1);
 
-                    for (int i = 0; i < rowCount; i++)
+                    for (int i = rLow; i <= rHigh; i++)
                     {
-                        string url = GetArrayVal(arr, i, 0);
-                        string cookies = colCount > 1 ? GetArrayVal(arr, i, 1) : "";
-                        string descr = colCount > 2 ? GetArrayVal(arr, i, 2) : "";
-                        if (i == 0 && colCount > 3)
+                        string url = GetArrayVal(arr, i, cLow);
+                        string cookies = colCount > 1 ? GetArrayVal(arr, i, cLow + 1) : "";
+                        string descr = colCount > 2 ? GetArrayVal(arr, i, cLow + 2) : "";
+                        if (i == rLow && colCount > 3)
                         {
-                            userAgent = GetArrayVal(arr, 0, 3);
+                            userAgent = GetArrayVal(arr, rLow, cLow + 3);
                         }
 
                         if (!string.IsNullOrEmpty(url))
@@ -190,7 +192,9 @@ namespace Krolix.Com
                 }
                 else if (arr != null && arr.Rank == 1)
                 {
-                    for (int i = 0; i < arr.Length; i++)
+                    int low = arr.GetLowerBound(0);
+                    int high = arr.GetUpperBound(0);
+                    for (int i = low; i <= high; i++)
                     {
                         object v = arr.GetValue(i);
                         if (v != null)
@@ -254,9 +258,10 @@ namespace Krolix.Com
             try
             {
                 HttpWebRequest req = (HttpWebRequest)WebRequest.Create(endpoint);
+                req.Proxy = null;
                 req.Method = "POST";
                 req.ContentType = "application/json; charset=utf-8";
-                req.Headers.Add("X-Zero-Client", "zero-com");
+                req.Headers.Add("X-Krolix-Client", "krolix-com");
                 req.Timeout = 2500;
 
                 byte[] data = Encoding.UTF8.GetBytes(json);
@@ -278,15 +283,21 @@ namespace Krolix.Com
             }
         }
 
+        private static string EscapeCliArg(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("\"", "\\\"").TrimEnd('\\');
+        }
+
         private static void LaunchZeroCli(string url, string saveDir, string fileName, bool silent, bool queueOnly)
         {
             string zeroExe = FindZeroExe();
             if (File.Exists(zeroExe))
             {
                 StringBuilder cli = new StringBuilder();
-                cli.AppendFormat("/d \"{0}\"", url);
-                if (!string.IsNullOrEmpty(saveDir)) cli.AppendFormat(" /p \"{0}\"", saveDir);
-                if (!string.IsNullOrEmpty(fileName)) cli.AppendFormat(" /f \"{0}\"", fileName);
+                cli.AppendFormat("/d \"{0}\"", EscapeCliArg(url));
+                if (!string.IsNullOrEmpty(saveDir)) cli.AppendFormat(" /p \"{0}\"", EscapeCliArg(saveDir));
+                if (!string.IsNullOrEmpty(fileName)) cli.AppendFormat(" /f \"{0}\"", EscapeCliArg(fileName));
                 if (silent) cli.Append(" /n");
                 if (queueOnly) cli.Append(" /a");
 
@@ -303,6 +314,8 @@ namespace Krolix.Com
             {
                 Path.Combine(baseDir, "Krolix.exe"),
                 Path.GetFullPath(Path.Combine(baseDir, "..", "..", "Krolix.exe")),
+                Path.Combine(baseDir, "dist", "Krolix", "Krolix.exe"),
+                Path.GetFullPath(Path.Combine(baseDir, "..", "..", "dist", "Krolix", "Krolix.exe")),
                 Path.Combine(baseDir, "dist", "Zero", "Krolix.exe"),
                 Path.GetFullPath(Path.Combine(baseDir, "..", "..", "dist", "Zero", "Krolix.exe")),
                 Environment.ExpandEnvironmentVariables(@"%LOCALAPPDATA%\Programs\Krolix Download Manager\Krolix.exe")
@@ -318,7 +331,27 @@ namespace Krolix.Com
         private static string EscapeJson(string s)
         {
             if (string.IsNullOrEmpty(s)) return "";
-            return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n").Replace("\t", "\\t");
+            StringBuilder sb = new StringBuilder(s.Length);
+            foreach (char c in s)
+            {
+                switch (c)
+                {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '"': sb.Append("\\\""); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    case '\b': sb.Append("\\b"); break;
+                    case '\f': sb.Append("\\f"); break;
+                    default:
+                        if (c < ' ')
+                            sb.AppendFormat("\\u{0:x4}", (int)c);
+                        else
+                            sb.Append(c);
+                        break;
+                }
+            }
+            return sb.ToString();
         }
 
         /// <summary>
@@ -328,39 +361,43 @@ namespace Krolix.Com
         {
             try
             {
-                string asmName = "KrolixComBridge, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+                string asmName = typeof(KrolixLinkTransmitter).Assembly.FullName;
                 string codeBase = "file:///" + dllPath.Replace('\\', '/');
 
                 string[] clsids = new string[] { CLSID_OFFICIAL, CLSID_COMPAT };
+                string[] bases = new string[] { @"Software\Classes", @"Software\Classes\Wow6432Node" };
 
-                // 1. ProgID
-                using (RegistryKey prog = Registry.CurrentUser.CreateSubKey(@"Software\Classes\" + PROGID))
+                foreach (string b in bases)
                 {
-                    prog.SetValue("", "Krolix Download Manager Link Transmitter");
-                    using (RegistryKey clsidK = prog.CreateSubKey("CLSID"))
+                    // 1. ProgID
+                    using (RegistryKey prog = Registry.CurrentUser.CreateSubKey(b + @"\" + PROGID))
                     {
-                        clsidK.SetValue("", CLSID_OFFICIAL);
-                    }
-                }
-
-                // 2. CLSIDs
-                foreach (string clsid in clsids)
-                {
-                    using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\CLSID\" + clsid))
-                    {
-                        key.SetValue("", "Krolix.Com.KrolixLinkTransmitter");
-                        using (RegistryKey ip = key.CreateSubKey("InprocServer32"))
+                        prog.SetValue("", "Krolix Download Manager Link Transmitter");
+                        using (RegistryKey clsidK = prog.CreateSubKey("CLSID"))
                         {
-                            ip.SetValue("", "mscoree.dll");
-                            ip.SetValue("ThreadingModel", "Both");
-                            ip.SetValue("Class", "Krolix.Com.KrolixLinkTransmitter");
-                            ip.SetValue("Assembly", asmName);
-                            ip.SetValue("RuntimeVersion", "v4.0.30319");
-                            ip.SetValue("CodeBase", codeBase);
+                            clsidK.SetValue("", CLSID_OFFICIAL);
                         }
-                        using (RegistryKey pr = key.CreateSubKey("ProgID"))
+                    }
+
+                    // 2. CLSIDs
+                    foreach (string clsid in clsids)
+                    {
+                        using (RegistryKey key = Registry.CurrentUser.CreateSubKey(b + @"\CLSID\" + clsid))
                         {
-                            pr.SetValue("", PROGID);
+                            key.SetValue("", "Krolix.Com.KrolixLinkTransmitter");
+                            using (RegistryKey ip = key.CreateSubKey("InprocServer32"))
+                            {
+                                ip.SetValue("", "mscoree.dll");
+                                ip.SetValue("ThreadingModel", "Both");
+                                ip.SetValue("Class", "Krolix.Com.KrolixLinkTransmitter");
+                                ip.SetValue("Assembly", asmName);
+                                ip.SetValue("RuntimeVersion", "v4.0.30319");
+                                ip.SetValue("CodeBase", codeBase);
+                            }
+                            using (RegistryKey pr = key.CreateSubKey("ProgID"))
+                            {
+                                pr.SetValue("", PROGID);
+                            }
                         }
                     }
                 }
@@ -389,9 +426,13 @@ namespace Krolix.Com
         {
             try
             {
-                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\" + PROGID, false);
-                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\CLSID\" + CLSID_OFFICIAL, false);
-                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\CLSID\" + CLSID_COMPAT, false);
+                string[] bases = new string[] { @"Software\Classes", @"Software\Classes\Wow6432Node" };
+                foreach (string b in bases)
+                {
+                    Registry.CurrentUser.DeleteSubKeyTree(b + @"\" + PROGID, false);
+                    Registry.CurrentUser.DeleteSubKeyTree(b + @"\CLSID\" + CLSID_OFFICIAL, false);
+                    Registry.CurrentUser.DeleteSubKeyTree(b + @"\CLSID\" + CLSID_COMPAT, false);
+                }
                 return true;
             }
             catch { return false; }

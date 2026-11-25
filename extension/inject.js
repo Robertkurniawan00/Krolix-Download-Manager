@@ -559,6 +559,8 @@
         let reqUrl = "";
         if (typeof input === "string") {
           reqUrl = input;
+        } else if (input instanceof URL) {
+          reqUrl = input.href;
         } else if (input && typeof input.url === "string") {
           reqUrl = input.url;
         }
@@ -567,53 +569,53 @@
         if (reqUrl && !isAdOrJunkMedia(reqUrl)) {
           checkUrl(reqUrl);
         }
+      } catch (preErr) {}
 
-        const response = await origFetch.apply(this, args);
+      const response = await origFetch.apply(this, args);
 
-        // Header check on response & body sniffing for #EXTM3U or manifest URLs
-        try {
-          const respUrl = response.url || reqUrl;
-          if (respUrl && !isAdOrJunkMedia(respUrl) && !isFragment(respUrl)) {
-            const ct = (response.headers.get("content-type") || "").toLowerCase();
-            const cl = parseInt(response.headers.get("content-length") || "-1", 10);
-            checkUrl(respUrl, ct, cl);
+      // Header check on response & body sniffing for #EXTM3U or manifest URLs
+      try {
+        const input = args[0];
+        const reqUrl = (typeof input === "string") ? input : (input instanceof URL ? input.href : (input && typeof input.url === "string" ? input.url : ""));
+        const respUrl = response.url || reqUrl;
+        if (respUrl && !isAdOrJunkMedia(respUrl) && !isFragment(respUrl)) {
+          const ct = (response.headers.get("content-type") || "").toLowerCase();
+          const cl = parseInt(response.headers.get("content-length") || "-1", 10);
+          checkUrl(respUrl, ct, cl);
 
-            // Sniff response payload if textual, stream, or reasonable length
-            const isTextual =
-              ct.includes("json") ||
-              ct.includes("javascript") ||
-              ct.includes("mpegurl") ||
-              ct.includes("text") ||
-              ct.includes("octet-stream") ||
-              respUrl.includes("ajax") ||
-              respUrl.includes("get_edge") ||
-              !ct;
+          // Sniff response payload if textual, stream, or reasonable length
+          const isTextual =
+            ct.includes("json") ||
+            ct.includes("javascript") ||
+            ct.includes("mpegurl") ||
+            ct.includes("text") ||
+            ct.includes("octet-stream") ||
+            respUrl.includes("ajax") ||
+            respUrl.includes("get_edge") ||
+            !ct;
 
-            if (isTextual && (cl <= 0 || cl < 2097152)) {
-              response.clone().text().then((txt) => {
-                if (!txt) return;
-                if (isAdPayloadText(txt)) return; // Strictly ignore VAST & ad payloads!
-                const trimmed = txt.trimStart();
-                if (trimmed.startsWith("#EXTM3U")) {
-                  if (!isAdOrJunkMedia(respUrl)) {
-                    emitMediaDetected(respUrl, { type: "hls", mime: "application/vnd.apple.mpegurl", m3u8Content: txt });
-                  }
-                } else if (trimmed.startsWith("<?xml") && trimmed.includes("<MPD")) {
-                  if (!isAdOrJunkMedia(respUrl)) {
-                    emitMediaDetected(respUrl, { type: "dash", mime: "application/dash+xml" });
-                  }
-                } else {
-                  extractUrlsFromText(txt);
+          if (isTextual && (cl <= 0 || cl < 2097152)) {
+            response.clone().text().then((txt) => {
+              if (!txt) return;
+              if (isAdPayloadText(txt)) return; // Strictly ignore VAST & ad payloads!
+              const trimmed = txt.trimStart();
+              if (trimmed.startsWith("#EXTM3U")) {
+                if (!isAdOrJunkMedia(respUrl)) {
+                  emitMediaDetected(respUrl, { type: "hls", mime: "application/vnd.apple.mpegurl", m3u8Content: txt });
                 }
-              }).catch(() => {});
-            }
+              } else if (trimmed.startsWith("<?xml") && trimmed.includes("<MPD")) {
+                if (!isAdOrJunkMedia(respUrl)) {
+                  emitMediaDetected(respUrl, { type: "dash", mime: "application/dash+xml" });
+                }
+              } else {
+                extractUrlsFromText(txt);
+              }
+            }).catch(() => {});
           }
-        } catch (hErr) {}
+        }
+      } catch (hErr) {}
 
-        return response;
-      } catch (err) {
-        return origFetch.apply(this, args);
-      }
+      return response;
     };
   }
 

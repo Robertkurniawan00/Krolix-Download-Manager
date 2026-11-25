@@ -4,6 +4,7 @@ Fluent Dark UI for YouTube, Social Media, Playlists, Audio extraction, and Subti
 """
 
 import os
+import json
 import subprocess
 import threading
 import urllib.request
@@ -1121,6 +1122,29 @@ class YtdlpDialog(QDialog):
         cookie_choice = self.cookie_combo.currentText().strip()
         browser_arg = cookie_choice.lower() if cookie_choice != "Tanpa Cookie" else ""
 
+        subtitle_langs = ['id', 'en']
+        if hasattr(self, "combo_sub_lang"):
+            sel_lang = self.combo_sub_lang.currentData()
+            if sel_lang and sel_lang != "auto":
+                subtitle_langs = [sel_lang]
+        embed_thumb = self.chk_video_metadata.isChecked() if hasattr(self, "chk_video_metadata") else False
+        embed_metadata = embed_thumb
+        is_playlist = self.rb_all_playlist.isChecked() if (hasattr(self, "playlist_container") and self.playlist_container.isVisible()) else False
+        playlist_items = self.pl_range_input.text().strip() if (is_playlist and hasattr(self, "pl_range_input")) else ""
+        concurrent_frags = 8 if (hasattr(self, "chk_parallel_fragments") and self.chk_parallel_fragments.isChecked()) else 1
+        use_aria2 = self.chk_aria2.isChecked() if hasattr(self, "chk_aria2") else False
+
+        spd_text = self.combo_speed_limit.currentText() if hasattr(self, "combo_speed_limit") else ""
+        rate_limit = 0
+        if "1 MB/s" in spd_text:
+            rate_limit = 1024 * 1024
+        elif "2 MB/s" in spd_text:
+            rate_limit = 2 * 1024 * 1024
+        elif "5 MB/s" in spd_text:
+            rate_limit = 5 * 1024 * 1024
+        elif "10 MB/s" in spd_text:
+            rate_limit = 10 * 1024 * 1024
+
         base_fn = sanitize_filename(filename or "media_download")
         full_fn = base_fn if base_fn.lower().endswith(f".{ext}") else f"{base_fn}.{ext}"
 
@@ -1137,6 +1161,14 @@ class YtdlpDialog(QDialog):
                 'audio_format': audio_format,
                 'audio_bitrate': audio_bitrate,
                 'embed_subtitles': 'true' if embed_subtitles else 'false',
+                'subtitle_langs': json.dumps(subtitle_langs),
+                'embed_thumbnail': 'true' if embed_thumb else 'false',
+                'embed_metadata': 'true' if embed_metadata else 'false',
+                'concurrent_fragments': str(concurrent_frags),
+                'use_aria2': 'true' if use_aria2 else 'false',
+                'rate_limit': str(rate_limit),
+                'is_playlist': 'true' if is_playlist else 'false',
+                'playlist_items': playlist_items,
                 'cookies_browser': browser_arg,
             },
             total_bytes=-1,
@@ -1144,3 +1176,10 @@ class YtdlpDialog(QDialog):
         )
         self.engine.start_download(task.id)
         self.accept()
+
+    def closeEvent(self, event):
+        if hasattr(self, "cancel_event") and self.cancel_event:
+            self.cancel_event.set()
+        if hasattr(self, "pause_event") and self.pause_event:
+            self.pause_event.set()
+        super().closeEvent(event)

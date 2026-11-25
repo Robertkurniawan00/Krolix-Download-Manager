@@ -1,7 +1,7 @@
 r"""
 Krolix Download Manager v2.8 - Build Automation Script
 Produces:
-1. Standalone Application Folder (dist/Zero/Krolix.exe) with portable runtime.
+1. Standalone Application Folder (dist/Krolix/Krolix.exe) with portable runtime.
 2. Active Windows Installation sync (%LOCALAPPDATA%\Programs\Krolix Download Manager).
 3. Desktop & Start Menu shortcuts updated to point directly to Krolix.exe.
 4. Single root launcher executable (Krolix.exe) with no duplicate setup or runner files.
@@ -14,8 +14,8 @@ import subprocess
 
 def build_root_launcher(project_dir, icon_path):
     """ deploys the Smart App Control-verified PyInstaller Krolix.exe to the root directory using an _internal directory junction."""
-    dist_exe = os.path.join(project_dir, "dist", "Zero", "Krolix.exe")
-    dist_internal = os.path.join(project_dir, "dist", "Zero", "_internal")
+    dist_exe = os.path.join(project_dir, "dist", "Krolix", "Krolix.exe")
+    dist_internal = os.path.join(project_dir, "dist", "Krolix", "_internal")
     root_exe = os.path.join(project_dir, "Krolix.exe")
     root_internal = os.path.join(project_dir, "_internal")
 
@@ -23,11 +23,15 @@ def build_root_launcher(project_dir, icon_path):
         return False
 
     try:
-        # Ensure _internal junction exists in project_dir pointing to dist/Zero/_internal
+        # Ensure _internal junction exists in project_dir pointing to dist/Krolix/_internal
         if os.path.exists(dist_internal):
-            if os.path.lexists(root_internal) and not os.path.exists(root_internal):
+            if os.path.lexists(root_internal):
                 try:
-                    os.rmdir(root_internal)
+                    subprocess.run(
+                        ["cmd", "/c", "rmdir", root_internal],
+                        capture_output=True,
+                        text=True
+                    )
                 except Exception:
                     pass
             if not os.path.lexists(root_internal):
@@ -408,7 +412,7 @@ def build():
     # --- Step 1b: Build Standalone Setup Wizard (Krolix_Setup.exe) ---
     installer_py = os.path.join(project_dir, "installer.py")
     if os.path.exists(installer_py):
-        print("\n[1b/4] Compiling Standalone Zero Setup Wizard (Krolix_Setup.exe)...")
+        print("\n[1b/4] Compiling Standalone Krolix Setup Wizard (Krolix_Setup.exe)...")
         cmd_installer = [
             sys.executable, "-m", "PyInstaller",
             "--name=Krolix_Setup",
@@ -419,6 +423,7 @@ def build():
             "--optimize=2",
             f"--icon={icon_path}",
             f"--add-data={assets_dir}{os.pathsep}app/assets",
+            f"--add-data={dist_dir}{os.pathsep}payload/Krolix",
             f"--distpath={dist_dir}",
             installer_py
         ]
@@ -761,19 +766,30 @@ if not exist "%TARGET_DIR%" mkdir "%TARGET_DIR%"
 echo [*] Copying application files...
 xcopy /E /I /Y /Q "%~dp0*" "%TARGET_DIR%\" >nul 2>&1
 
-echo [*] Registering URL protocols (krolix-dl:// and zero://)...
+echo [*] Registering URL protocols (krolix-dl://, krolix://, zero-dl://, zero://)...
 reg add "HKCU\Software\Classes\krolix-dl" /ve /d "URL:Krolix Download Manager Protocol" /f >nul 2>&1
 reg add "HKCU\Software\Classes\krolix-dl" /v "URL Protocol" /d "" /f >nul 2>&1
 reg add "HKCU\Software\Classes\krolix-dl\DefaultIcon" /ve /d "\"%TARGET_DIR%\Krolix.exe\",0" /f >nul 2>&1
 reg add "HKCU\Software\Classes\krolix-dl\shell\open\command" /ve /d "\"%TARGET_DIR%\Krolix.exe\" \"%%1\"" /f >nul 2>&1
+
+reg add "HKCU\Software\Classes\krolix" /ve /d "URL:Krolix Download Manager Protocol" /f >nul 2>&1
+reg add "HKCU\Software\Classes\krolix" /v "URL Protocol" /d "" /f >nul 2>&1
+reg add "HKCU\Software\Classes\krolix\DefaultIcon" /ve /d "\"%TARGET_DIR%\Krolix.exe\",0" /f >nul 2>&1
+reg add "HKCU\Software\Classes\krolix\shell\open\command" /ve /d "\"%TARGET_DIR%\Krolix.exe\" \"%%1\"" /f >nul 2>&1
+
+reg add "HKCU\Software\Classes\zero-dl" /ve /d "URL:Krolix Download Manager Protocol" /f >nul 2>&1
+reg add "HKCU\Software\Classes\zero-dl" /v "URL Protocol" /d "" /f >nul 2>&1
+reg add "HKCU\Software\Classes\zero-dl\DefaultIcon" /ve /d "\"%TARGET_DIR%\Krolix.exe\",0" /f >nul 2>&1
+reg add "HKCU\Software\Classes\zero-dl\shell\open\command" /ve /d "\"%TARGET_DIR%\Krolix.exe\" \"%%1\"" /f >nul 2>&1
 
 reg add "HKCU\Software\Classes\zero" /ve /d "URL:Krolix Download Manager Protocol" /f >nul 2>&1
 reg add "HKCU\Software\Classes\zero" /v "URL Protocol" /d "" /f >nul 2>&1
 reg add "HKCU\Software\Classes\zero\DefaultIcon" /ve /d "\"%TARGET_DIR%\Krolix.exe\",0" /f >nul 2>&1
 reg add "HKCU\Software\Classes\zero\shell\open\command" /ve /d "\"%TARGET_DIR%\Krolix.exe\" \"%%1\"" /f >nul 2>&1
 
-echo [*] Registering Browser Native Messaging Host...
+echo [*] Generating and registering Browser Native Messaging Host...
 set "MANIFEST=%TARGET_DIR%\com.krolix.downloader.json"
+powershell -NoProfile -Command "$p = Join-Path $env:LOCALAPPDATA 'Programs\Krolix Download Manager\Krolix.exe'; $obj = @{ name='com.krolix.downloader'; description='Krolix Download Manager Native Messaging Host'; path=$p; type='stdio'; allowed_origins=@('chrome-extension://dlmghihibfmgdfjkcfedcecdljoeamah/','chrome-extension://fmphmjmdhgpbhmkekcbfhpfhjhckjclh/','chrome-extension://ndcpkimcihhghdcddljkfmmjccdmcmof/','chrome-extension://bcfcjeddkhklkknmfhckpiigablapbab/','chrome-extension://admccjkmockfdflocgggjfgdacdodkdf/') }; $obj | ConvertTo-Json | Set-Content -Path '%MANIFEST%' -Encoding UTF8" >nul 2>&1
 reg add "HKCU\Software\Google\Chrome\NativeMessagingHosts\com.krolix.downloader" /ve /d "%MANIFEST%" /f >nul 2>&1
 reg add "HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.krolix.downloader" /ve /d "%MANIFEST%" /f >nul 2>&1
 reg add "HKCU\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.krolix.downloader" /ve /d "%MANIFEST%" /f >nul 2>&1
@@ -821,6 +837,8 @@ taskkill /F /IM ffmpeg.exe >nul 2>&1
 
 echo Menghapus registry associations...
 reg delete "HKCU\Software\Classes\krolix-dl" /f >nul 2>&1
+reg delete "HKCU\Software\Classes\krolix" /f >nul 2>&1
+reg delete "HKCU\Software\Classes\zero-dl" /f >nul 2>&1
 reg delete "HKCU\Software\Classes\zero" /f >nul 2>&1
 reg delete "HKCU\Software\Google\Chrome\NativeMessagingHosts\com.krolix.downloader" /f >nul 2>&1
 reg delete "HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.krolix.downloader" /f >nul 2>&1
@@ -842,7 +860,7 @@ OPSI A - INSTALASI LENGKAP KE SISTEM (DIREKOMENDASIKAN):
 1. Ekstrak folder ini ke mana saja di PC baru.
 2. Klik kanan pada 'Install_Krolix.bat' lalu pilih 'Run as administrator' (atau klik 2x).
 3. Script akan otomatis:
-   - Memasang Zero ke: %LOCALAPPDATA%\\Programs\\Krolix Download Manager
+   - Memasang Krolix ke: %LOCALAPPDATA%\\Programs\\Krolix Download Manager
    - Mendaftarkan URL protocol krolix-dl://
    - Mendaftarkan Native Messaging Host untuk Chrome, Edge, dan Brave
    - Membuat shortcut di Desktop dan Start Menu

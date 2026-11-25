@@ -1,3 +1,13 @@
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   const toggle = document.getElementById("toggleIntercept");
   const connectionBadge = document.getElementById("connectionBadge");
@@ -454,10 +464,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       card.className = "stream-card";
       card.innerHTML = `
         <div class="stream-info">
-          <div class="stream-name" title="${displayName}">${displayName}</div>
+          <div class="stream-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
           <div class="stream-meta">
-            <span class="pill ${pillClass}">${pillText}</span>
-            <span class="stream-size">${metaParts.join(" • ")}</span>
+            <span class="pill ${escapeHtml(pillClass)}">${escapeHtml(pillText)}</span>
+            <span class="stream-size">${escapeHtml(metaParts.join(" • "))}</span>
           </div>
         </div>
         <div class="card-btns">
@@ -520,8 +530,8 @@ document.addEventListener("DOMContentLoaded", async () => {
           }
         }
 
-        // Safety fallback timer: guarantee button never stays stuck even if message channel drops
-        const timer = setTimeout(() => finishButton(true), 2500);
+        // Safety fallback timer: avoid hanging spinner or falsely claiming success
+        const timer = setTimeout(() => finishButton(false), 4500);
 
         const hlsVariants = validStreams.filter((st) => st.is_hls || (st.url && st.url.includes(".m3u8")));
 

@@ -34,17 +34,27 @@ class QueueManager(QObject):
 
     def start_queue(self, queue_name: str = "Main Queue"):
         if self.engine:
-            for tid, t in list(self.engine.tasks.items()):
-                if t.status in [DownloadStatus.QUEUED, DownloadStatus.PAUSED]:
-                    self.engine.start_download(tid)
+            with self.engine.lock:
+                targets = [
+                    tid for tid, t in self.engine.tasks.items()
+                    if t.status in [DownloadStatus.QUEUED, DownloadStatus.PAUSED]
+                    and (not queue_name or getattr(t, "queue_name", "Main Queue") == queue_name)
+                ]
+            for tid in targets:
+                self.engine.start_download(tid)
         else:
             self.resume_all()
 
     def stop_queue(self, queue_name: str = "Main Queue"):
         if self.engine:
-            for tid, t in list(self.engine.tasks.items()):
-                if t.status == DownloadStatus.DOWNLOADING:
-                    self.engine.pause_download(tid)
+            with self.engine.lock:
+                targets = [
+                    tid for tid, t in self.engine.tasks.items()
+                    if t.status == DownloadStatus.DOWNLOADING
+                    and (not queue_name or getattr(t, "queue_name", "Main Queue") == queue_name)
+                ]
+            for tid in targets:
+                self.engine.pause_download(tid)
         else:
             self.pause_all()
 

@@ -156,11 +156,17 @@ class YtdlpWorker(threading.Thread):
         if not info:
             raise ValueError("Tidak dapat mengambil informasi media dari URL ini.")
 
-        # Detect playlist
-        is_playlist = info.get('_type') == 'playlist' or ('entries' in info and isinstance(info.get('entries'), list))
-        entries = info.get('entries') or []
+        # Detect playlist (materializing lazy generators safely up to 50 preview items)
+        raw_entries = info.get('entries')
+        is_playlist = info.get('_type') == 'playlist' or (raw_entries is not None and not isinstance(raw_entries, (str, bytes, dict)))
+        entries = []
+        if is_playlist and raw_entries is not None:
+            for idx, ent in enumerate(raw_entries):
+                entries.append(ent)
+                if idx >= 49:
+                    break
         playlist_title = info.get('title', '') if is_playlist else ''
-        playlist_count = len(entries) if entries else (info.get('playlist_count') or 1)
+        playlist_count = info.get('playlist_count') or len(entries) or 1
 
         parsed_entries = []
         for i, ent in enumerate(entries[:50]):
@@ -381,8 +387,8 @@ class YtdlpWorker(threading.Thread):
             container = self.container_format if self.container_format in ('mp4', 'mkv', 'webm') else 'mp4'
 
             if self.format_id and self.format_id not in ('best', 'bestvideo'):
-                # Exact format ID selected
-                ydl_opts['format'] = f"{self.format_id}+bestaudio/best"
+                # Exact format ID selected; fallback safely if format already has audio or is audio-only
+                ydl_opts['format'] = f"{self.format_id}+bestaudio/{self.format_id}/best"
             elif self.video_quality and self.video_quality != 'best':
                 h = self.video_quality.replace('p', '')
                 if container == 'mp4':

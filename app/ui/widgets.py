@@ -88,6 +88,7 @@ class FileNameDelegate(QStyledItemDelegate):
     - Domain and status subtext (Slate-500)
     """
     accent_color = QColor("#cbd5e1") # Default Chrome Platinum
+    is_light_theme = False
 
     BADGE_COLORS = {
         # Video - Sleek Platinum Chrome
@@ -121,6 +122,10 @@ class FileNameDelegate(QStyledItemDelegate):
         except Exception:
             pass
 
+    @classmethod
+    def set_light_theme(cls, is_light: bool):
+        cls.is_light_theme = bool(is_light)
+
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -146,7 +151,10 @@ class FileNameDelegate(QStyledItemDelegate):
             painter.drawRoundedRect(accent_rect, 1.75, 1.75)
 
         # Extension Badge (Frosted Glass Pill)
-        bg_col, border_col, txt_col = self.BADGE_COLORS.get(ext, (QColor(148, 163, 184, 25), QColor(148, 163, 184, 65), QColor("#cbd5e1")))
+        if self.is_light_theme:
+            bg_col, border_col, txt_col = (QColor(15, 23, 42, 16), QColor(15, 23, 42, 45), QColor("#1e293b"))
+        else:
+            bg_col, border_col, txt_col = self.BADGE_COLORS.get(ext, (QColor(148, 163, 184, 25), QColor(148, 163, 184, 65), QColor("#cbd5e1")))
         badge_w = 40
         badge_h = 22
         badge_x = rect.left() + 12
@@ -171,7 +179,7 @@ class FileNameDelegate(QStyledItemDelegate):
         name_font = QFont("Segoe UI Variable Display", 9)
         name_font.setBold(True)
         painter.setFont(name_font)
-        painter.setPen(QColor("#f8fafc"))
+        painter.setPen(QColor("#0f172a") if self.is_light_theme else QColor("#f8fafc"))
         elided_name = painter.fontMetrics().elidedText(filename, Qt.TextElideMode.ElideRight, content_w)
         painter.drawText(name_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_name)
 
@@ -193,6 +201,7 @@ class ProgressSegmentsDelegate(QStyledItemDelegate):
     - Bottom: Sleek Windows 11 Fluent rounded progress bar with dynamic accent glow
     """
     accent_color = QColor("#94a3b8") # Default Chrome Silver
+    is_light_theme = False
 
     @classmethod
     def set_accent_color(cls, hex_code: str):
@@ -200,6 +209,14 @@ class ProgressSegmentsDelegate(QStyledItemDelegate):
             cls.accent_color = QColor(hex_code)
         except Exception:
             pass
+
+    @classmethod
+    def set_light_theme(cls, is_light: bool):
+        cls.is_light_theme = bool(is_light)
+
+    @classmethod
+    def set_light_theme(cls, is_light: bool):
+        cls.is_light_theme = bool(is_light)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
         painter.save()
@@ -228,20 +245,20 @@ class ProgressSegmentsDelegate(QStyledItemDelegate):
 
         pct_str = f"{progress:.1f}%"
         if progress >= 100:
-            pct_color = QColor("#86efac") # Soft metallic mint when complete
+            pct_color = QColor("#059669") if self.is_light_theme else QColor("#86efac")
         elif status in ["error", "failed"]:
-            pct_color = QColor("#fda4af") # Soft muted rose on error
+            pct_color = QColor("#dc2626") if self.is_light_theme else QColor("#fda4af")
         elif status in ["paused", "stopped"]:
-            pct_color = QColor("#94a3b8") # Soft slate silver when paused (calm, no bright orange)
+            pct_color = QColor("#64748b") if self.is_light_theme else QColor("#94a3b8")
         else:
-            pct_color = QColor("#f8fafc") # Crisp white when downloading
+            pct_color = QColor("#0f172a") if self.is_light_theme else QColor("#f8fafc")
 
         painter.setPen(pct_color)
         painter.drawText(top_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, pct_str)
 
         font_sub = QFont("Segoe UI Variable Text", 8)
         painter.setFont(font_sub)
-        painter.setPen(QColor("#94a3b8"))
+        painter.setPen(QColor("#475569") if self.is_light_theme else QColor("#94a3b8"))
         painter.drawText(top_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, streams_txt)
 
         # Bottom Progress Bar
@@ -251,7 +268,7 @@ class ProgressSegmentsDelegate(QStyledItemDelegate):
 
         # Background track
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(QColor("#121212")))
+        painter.setBrush(QBrush(QColor("#e2e8f0") if self.is_light_theme else QColor("#121212")))
         painter.drawRoundedRect(bar_bg_rect, 2.5, 2.5)
 
         # Progress fill

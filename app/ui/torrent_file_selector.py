@@ -314,3 +314,9 @@ class TorrentFileSelectorDialog(QDialog):
     def get_selected_indices(self) -> list:
         return getattr(self, "selected_indices", [])
 
+    def closeEvent(self, event):
+        if hasattr(self, "worker") and self.worker and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait(1500)
+        super().closeEvent(event)
+

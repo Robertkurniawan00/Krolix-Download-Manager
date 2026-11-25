@@ -505,8 +505,12 @@ class DownloadProgressDialog(QDialog):
         limiter_layout.setContentsMargins(12, 12, 12, 12)
         limiter_layout.setSpacing(12)
 
-        self.chk_enable_limit = QCheckBox("Enable Speed Limiter for this download")
+        self.chk_enable_limit = QCheckBox("Enable Speed Limiter (Global Limit)")
         self.chk_enable_limit.setStyleSheet("color: #f1f5f9; font-weight: 600;")
+        limiter_obj = getattr(self.engine, "speed_limiter", None)
+        cur_limit_kbps = max(10, int(getattr(limiter_obj, "max_bytes_per_sec", 0) // 1024)) if (limiter_obj and getattr(limiter_obj, "max_bytes_per_sec", 0) > 0) else 1024
+        is_lim_on = bool(limiter_obj and getattr(limiter_obj, "enabled", False) and getattr(limiter_obj, "max_bytes_per_sec", 0) > 0)
+        self.chk_enable_limit.setChecked(is_lim_on)
         limiter_layout.addWidget(self.chk_enable_limit)
 
         row_limit = QHBoxLayout()
@@ -514,11 +518,13 @@ class DownloadProgressDialog(QDialog):
         lbl_limit.setStyleSheet("color: #cbd5e1; font-size: 12px;")
         self.spn_limit_val = QSpinBox()
         self.spn_limit_val.setRange(10, 500000)
-        self.spn_limit_val.setValue(1024)
+        self.spn_limit_val.setValue(cur_limit_kbps)
         self.spn_limit_val.setSuffix(" KB/s")
         self.spn_limit_val.setFixedWidth(120)
-        self.spn_limit_val.setEnabled(False)
+        self.spn_limit_val.setEnabled(is_lim_on)
         self.chk_enable_limit.toggled.connect(self.spn_limit_val.setEnabled)
+        self.chk_enable_limit.toggled.connect(self._apply_speed_limiter)
+        self.spn_limit_val.valueChanged.connect(self._apply_speed_limiter)
         row_limit.addWidget(lbl_limit)
         row_limit.addWidget(self.spn_limit_val)
         row_limit.addStretch()
@@ -534,13 +540,19 @@ class DownloadProgressDialog(QDialog):
 
         self.chk_opt_hangup = QCheckBox("Disconnect internet connection when done")
         self.chk_opt_hangup.setStyleSheet("color: #cbd5e1; font-size: 12px;")
+        self.chk_opt_hangup.setEnabled(False)
         self.chk_opt_shutdown = QCheckBox("Turn off computer when done")
         self.chk_opt_shutdown.setStyleSheet("color: #cbd5e1; font-size: 12px;")
+        self.chk_opt_shutdown.setChecked(getattr(self.task, "post_action", "none") == "shutdown")
+        self.chk_opt_shutdown.toggled.connect(self._apply_completion_options)
         self.chk_opt_force = QCheckBox("Force processes to close on shutdown")
         self.chk_opt_force.setStyleSheet("color: #cbd5e1; font-size: 12px;")
         self.chk_opt_dialog = QCheckBox("Show download complete dialog")
         self.chk_opt_dialog.setStyleSheet("color: #cbd5e1; font-size: 12px;")
-        self.chk_opt_dialog.setChecked(True)
+        _db_obj = getattr(self.engine, "db", None)
+        _show_comp = (_db_obj.get_setting("show_complete_dialog", "true") == "true") if _db_obj else True
+        self.chk_opt_dialog.setChecked(_show_comp)
+        self.chk_opt_dialog.toggled.connect(self._apply_completion_options)
 
         options_layout.addWidget(self.chk_opt_hangup)
         options_layout.addWidget(self.chk_opt_shutdown)
@@ -564,11 +576,33 @@ class DownloadProgressDialog(QDialog):
 
         footer.addStretch()
 
-        lbl_brand = QLabel("Zero v2.6")
+        lbl_brand = QLabel("Krolix v2.8")
         lbl_brand.setStyleSheet("color: #475569; font-family: 'JetBrains Mono', monospace; font-size: 10px;")
         footer.addWidget(lbl_brand)
 
         main_layout.addLayout(footer)
+
+    def _apply_speed_limiter(self, *_args):
+        limiter = getattr(self.engine, "speed_limiter", None)
+        db = getattr(self.engine, "db", None)
+        if not limiter:
+            return
+        if self.chk_enable_limit.isChecked():
+            kbps = self.spn_limit_val.value()
+            limiter.set_limit(kbps * 1024)
+            if db:
+                db.set_setting("speed_limit_kbps", kbps)
+        else:
+            limiter.set_limit(0)
+            if db:
+                db.set_setting("speed_limit_kbps", 0)
+
+    def _apply_completion_options(self, *_args):
+        self.task.post_action = "shutdown" if self.chk_opt_shutdown.isChecked() else "none"
+        db = getattr(self.engine, "db", None)
+        if db:
+            db.set_setting("show_complete_dialog", "true" if self.chk_opt_dialog.isChecked() else "false")
+            db.save_task(self.task)
 
     def _switch_tab(self, index: int):
         self.stack.setCurrentIndex(index)

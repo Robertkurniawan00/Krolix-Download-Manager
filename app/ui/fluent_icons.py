@@ -144,11 +144,6 @@ def create_fluent_scheduler_icon(color: str = "#f1f5f9") -> QIcon:
         p.drawLine(QPointF(c, c), QPointF(c + r * 0.45, c))
         p.end()
         icon.addPixmap(pix)
-        p.setPen(QPen(QColor(color), pen_w, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        p.drawLine(QPointF(c, c), QPointF(c, c - r * 0.62))
-        p.drawLine(QPointF(c, c), QPointF(c + r * 0.45, c))
-        p.end()
-        icon.addPixmap(pix)
     return icon
 
 

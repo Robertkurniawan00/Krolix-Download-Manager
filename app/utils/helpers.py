@@ -83,7 +83,7 @@ def sanitize_filename(filename: str, max_stem_len: int = 100) -> str:
     cleaned_base = re.sub(r'\.{2,}', '_', cleaned_base)
     cleaned_base = cleaned_base.strip(" ._")
 
-    cleaned_ext = re.sub(r'[\\/*?:"<>|]', '', ext).strip()
+    cleaned_ext = re.sub(r'[\x00-\x1f\x7f-\x9f\\/*?:"<>|]', '', ext).strip()
 
     # Prevent Windows MAX_PATH (>260 chars) failure by limiting file stem
     if len(cleaned_base) > max_stem_len:
@@ -148,7 +148,7 @@ def extract_filename_from_headers(headers, url: str) -> str:
                     cd = v
                     break
     if cd:
-        match_utf8 = re.search(r"filename\*\s*=\s*UTF-8''([^;\r\n]+)", cd, re.IGNORECASE)
+        match_utf8 = re.search(r"filename\*\s*=\s*UTF-8'[a-zA-Z0-9-]*'([^;\r\n]+)", cd, re.IGNORECASE)
         if match_utf8:
             return sanitize_filename(urllib.parse.unquote(match_utf8.group(1).strip('"\'')))
 
@@ -173,15 +173,19 @@ def apply_windows_dark_titlebar(widget):
         return
     try:
         import ctypes
+        from ctypes import wintypes
+        dwmapi = ctypes.windll.dwmapi
+        dwmapi.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
         hwnd = int(widget.winId())
         DWMWA_USE_IMMERSIVE_DARK_MODE = 20
         value = ctypes.c_int(1)
-        res = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+        res = dwmapi.DwmSetWindowAttribute(
             hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value)
         )
         if res != 0:
             DWMWA_USE_IMMERSIVE_DARK_MODE_OLD = 19
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            dwmapi.DwmSetWindowAttribute(
                 hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, ctypes.byref(value), ctypes.sizeof(value)
             )
     except Exception:
@@ -246,6 +250,12 @@ def apply_taskbar_icon(widget):
                 ico_path = m_ico
 
         if os.path.exists(ico_path):
+            from ctypes import wintypes
+            user32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+            user32.LoadImageW.restype = wintypes.HANDLE
+            user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            user32.SendMessageW.restype = ctypes.c_ssize_t
+
             IMAGE_ICON = 1
             LR_LOADFROMFILE = 0x00000010
             WM_SETICON = 0x0080

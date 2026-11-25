@@ -11,9 +11,9 @@ class PostActionManager:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if sys.platform == "win32" else 0
         if action == "shutdown":
             # Shutdown with 60 second delay to allow user to abort if needed
-            subprocess.run(["shutdown", "/s", "/t", "60", "/c", "Zero Download Assistant: Downloads completed. PC will shutdown in 60s."], creationflags=flags)
+            subprocess.run(["shutdown", "/s", "/t", "60", "/c", "Krolix Download Manager: Downloads completed. PC will shutdown in 60s."], creationflags=flags)
         elif action == "restart":
-            subprocess.run(["shutdown", "/r", "/t", "60", "/c", "Zero Download Assistant: Downloads completed. PC will restart in 60s."], creationflags=flags)
+            subprocess.run(["shutdown", "/r", "/t", "60", "/c", "Krolix Download Manager: Downloads completed. PC will restart in 60s."], creationflags=flags)
         elif action == "sleep":
             # Windows Sleep API
             try:
@@ -27,6 +27,14 @@ class PostActionManager:
             except Exception:
                 subprocess.run(["shutdown", "/h"], creationflags=flags)
         elif action == "exit":
+            try:
+                from PyQt6.QtWidgets import QApplication
+                app = QApplication.instance()
+                if app is not None:
+                    app.quit()
+                    return
+            except Exception:
+                pass
             sys.exit(0)
 
     @staticmethod
@@ -90,8 +98,10 @@ class AntivirusScanner:
                     cmd_args = []
                     for token in raw_tokens:
                         clean_token = token.strip('"\'')
-                        if "%1" in clean_token or "%file%" in clean_token:
-                            clean_token = clean_token.replace("%1", abs_target).replace("%file%", abs_target)
+                        low_tok = clean_token.lower()
+                        if "%1" in low_tok or "%file%" in low_tok:
+                            import re as _re
+                            clean_token = _re.sub(r'%1|%file%', lambda _m: abs_target, clean_token, flags=_re.IGNORECASE)
                             has_placeholder = True
                         cmd_args.append(clean_token)
                     
@@ -101,6 +111,8 @@ class AntivirusScanner:
                     res = subprocess.run(
                         cmd_args,
                         capture_output=True,
+                        stdin=subprocess.DEVNULL,
+                        timeout=120,
                         creationflags=flags
                     )
                     is_clean = (res.returncode == 0)

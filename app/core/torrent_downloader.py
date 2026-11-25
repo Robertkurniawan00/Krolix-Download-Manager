@@ -219,8 +219,8 @@ class TorrentWorker(threading.Thread):
             os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "assets", "bin")),
             os.path.abspath(os.path.join(os.path.dirname(sys.executable), "app", "assets", "bin")),
             os.path.abspath(os.path.join(os.path.dirname(sys.executable), "_internal", "app", "assets", "bin")),
-            os.path.abspath(os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Zero Download Assistant", "app", "assets", "bin")),
-            os.path.abspath(os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Zero Download Assistant", "_internal", "app", "assets", "bin")),
+            os.path.abspath(os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Krolix Download Manager", "app", "assets", "bin")),
+            os.path.abspath(os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Krolix Download Manager", "_internal", "app", "assets", "bin")),
             os.path.dirname(os.path.abspath(sys.executable)),
         ]
         if hasattr(sys, "_MEIPASS"):
@@ -385,11 +385,13 @@ class TorrentWorker(threading.Thread):
                 with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as tf:
                     tf.write(raw_b)
                     tmp_t_path = tf.name
-                parsed = TorrentWorker._parse_torrent_bencode(tmp_t_path)
                 try:
-                    os.remove(tmp_t_path)
-                except Exception:
-                    pass
+                    parsed = TorrentWorker._parse_torrent_bencode(tmp_t_path)
+                finally:
+                    try:
+                        os.remove(tmp_t_path)
+                    except Exception:
+                        pass
                 if parsed and parsed.get("files"):
                     return parsed["files"]
             except Exception as e:
@@ -586,10 +588,13 @@ class TorrentWorker(threading.Thread):
                     if f.lower().endswith(".torrent"):
                         cand = os.path.join(dl_dir, f)
                         if os.path.isfile(cand) and os.path.getsize(cand) > 100:
-                            p_info = cls._parse_torrent_bencode(cand)
-                            if p_info and p_info.get("name") and p_info["name"].lower() in source.lower():
-                                shutil.copy2(cand, target_torrent)
-                                return target_torrent, None
+                            try:
+                                p_info = cls._parse_torrent_bencode(cand)
+                                if p_info and p_info.get("name") and p_info["name"].lower() in source.lower():
+                                    shutil.copy2(cand, target_torrent)
+                                    return target_torrent, None
+                            except Exception:
+                                continue
 
             err_str = str(e)
             if "403" in err_str:
